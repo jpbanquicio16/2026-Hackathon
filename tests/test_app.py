@@ -213,9 +213,9 @@ def test_iris_heldout_upload_matches_independent_counts_and_cell_ids(app):
     assert selectbox(app, "Predicted label column").value == "predicted_species"
     assert selectbox(app, "X axis feature").value == "sepal_length"
     assert selectbox(app, "Y axis feature").value == "sepal_width"
-    confusion = app.dataframe[1].value
+    confusion = next(d.value for d in app.dataframe if d.value.index.name == "actual" and d.value.columns.name == "predicted")
     assert confusion.to_numpy().tolist() == [[10, 0, 0], [0, 10, 0], [0, 2, 8]]
-    mapped = app.dataframe[4].value
+    mapped = next(d.value for d in app.dataframe if "small sample" in d.value.columns)
     expected = {
         (0, 0): (2, 0), (0, 1): (1, 0), (0, 2): (3, 0), (0, 3): (1, 0),
         (1, 0): (1, 0), (1, 1): (1, 0), (1, 2): (2, 0), (1, 3): (3, 0),

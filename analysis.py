@@ -272,6 +272,8 @@ class Evaluation:
     n_missing_actual: int  # only the actual label is missing
     n_missing_predicted: int  # only the predicted label is missing
     n_missing_both: int
+    task: str = "classification"
+    tolerance: float = 0.0
 
     @property
     def n_evaluated(self) -> int:
@@ -528,6 +530,7 @@ class Bins:
     labels: tuple[str, ...]
     whole_numbers: bool
     places: int = 0  # decimal places used for the edges
+    exact_labels: bool = False
 
     def __len__(self) -> int:
         return len(self.labels)
@@ -544,7 +547,7 @@ class Bins:
         if self.whole_numbers:
             low, high = int(self.edges[i]), int(self.edges[i + 1]) - 1
             return f"{name} = {low:,}" if low == high else f"{low:,} ≤ {name} ≤ {high:,}"
-        low, high = (f"{edge:,.{self.places}f}" for edge in self.edges[i : i + 2])
+        low, high = ((str(edge) if self.exact_labels else f"{edge:,.{self.places}f}") for edge in self.edges[i : i + 2])
         upper = "≤" if i == len(self) - 1 else "<"
         return f"{low} ≤ {name} {upper} {high}"
 
@@ -609,6 +612,29 @@ def make_bins(values: pd.Series | np.ndarray, n_bins: int = DEFAULT_BINS) -> Bin
     return Bins(tuple(edges), tuple(labels), whole_numbers=False, places=places)
 
 
+def flexible_bins(values, n_bins: int, method: str = "Equal width", edges: tuple[float, ...] | None = None) -> Bins:
+    """Quantiles keep tied values together; custom edges must cover every mapped value."""
+    if method == "Equal width":
+        return make_bins(values, n_bins)
+    numbers = np.asarray(values, dtype=float)
+    numbers = numbers[np.isfinite(numbers)]
+    if numbers.size == 0:
+        raise DataError("There are no numeric values to split into ranges.")
+    if method == "Quantiles":
+        boundaries = np.unique(np.quantile(numbers, np.linspace(0, 1, n_bins + 1)))
+    elif method == "Custom boundaries":
+        boundaries = np.asarray(edges if edges is not None else (), dtype=float)
+    else:
+        raise DataError("Unknown binning method.")
+    if len(boundaries) < 2 or len(boundaries) > 21 or not np.isfinite(boundaries).all() or (np.diff(boundaries) <= 0).any():
+        raise DataError("Use 2–21 finite, strictly increasing boundaries. Tied quantiles may leave no ranges.")
+    if numbers.min() < boundaries[0] or numbers.max() > boundaries[-1]:
+        raise DataError(f"Custom boundaries must cover every mapped value ({numbers.min():g} to {numbers.max():g}).")
+    boundaries = tuple(float(value) for value in boundaries)
+    labels = [f"[{lo}, {hi}{']' if i == len(boundaries) - 2 else ')'}" for i, (lo, hi) in enumerate(zip(boundaries, boundaries[1:]))]
+    return Bins(boundaries, tuple(labels), False, exact_labels=True)
+
+
 # ---------------------------------------------------------------------------
 # Failure map
 
@@ -666,6 +692,9 @@ def build_failure_map(
     x_col: str,
     y_col: str,
     n_bins: int = DEFAULT_BINS,
+    method: str = "Equal width",
+    x_edges: tuple[float, ...] | None = None,
+    y_edges: tuple[float, ...] | None = None,
 ) -> FailureMap:
     """Group evaluated rows into a grid of feature ranges and count errors.
 
@@ -695,13 +724,16 @@ def build_failure_map(
             "is_error": evaluation_rows["is_error"][mappable],
         }
     )
+    for column in ("residual", "absolute_error"):
+        if column in evaluation_rows:
+            rows[column] = evaluation_rows.loc[rows.index, column]
     if rows.empty:
         raise DataError(f"No evaluated row has numeric values for both {x_col} and {y_col}.")
 
     bins = {}
     for axis, column in (("x", x_col), ("y", y_col)):
         try:
-            bins[axis] = make_bins(rows[f"{axis}_value"], n_bins)
+            bins[axis] = flexible_bins(rows[f"{axis}_value"], n_bins, method, x_edges if axis == "x" else y_edges)
         except DataError as exc:
             raise DataError(
                 f"{column} can't be split into ranges on the mapped rows: {exc} Choose another feature."
@@ -720,6 +752,10 @@ def build_failure_map(
         .reset_index()
     )
     cells["error_rate"] = cells["errors"] / cells["total"].where(cells["total"] > 0)
+    if "absolute_error" in rows:
+        grouped = rows.groupby(["x_bin", "y_bin"])
+        cells["mae"] = grouped["absolute_error"].mean().reindex(grid).to_numpy()
+        cells["mean_residual"] = grouped["residual"].mean().reindex(grid).to_numpy()
 
     return FailureMap(
         x_col=x_col,
@@ -757,7 +793,7 @@ def consistency_checks(overview: Overview, fmap: FailureMap | None = None) -> li
                 "Cell errors add up to the errors among mapped rows",
                 int(fmap.cells["errors"].sum()) == int(fmap.rows["is_error"].sum()),
             ),
-            ("Mapped + omitted = evaluated rows", fmap.n_mapped + fmap.n_omitted == overview.n_evaluated),
+            ("Mapped + omitted = evaluated rows in map scope", fmap.n_mapped + fmap.n_omitted == fmap.n_evaluated and fmap.n_evaluated <= overview.n_evaluated),
         ]
     return checks
 
