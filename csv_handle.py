@@ -5,5 +5,5 @@ import streamlit as st
 input_file = st.file_uploader("Upload predictions", type="csv")
 
 if input_file is not None: 
-    file_df = pd.read_csv(input_file)
+    file_csv = pd.read_csv(input_file)
 
