@@ -101,7 +101,8 @@ def theme_is_dark() -> bool:
         return False
 
 
-@st.cache_data(show_spinner=False, max_entries=8)
+# The cache is shared by every visitor to a deployed app, so keep it small.
+@st.cache_data(show_spinner=False, max_entries=4, ttl="1h")
 def load(data: bytes) -> A.LoadedCSV:
     return A.load_csv(data)
 

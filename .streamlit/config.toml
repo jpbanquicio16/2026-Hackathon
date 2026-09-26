@@ -1,0 +1,8 @@
+# Streamlit reads this file when the app is started from the repository root,
+# which is also how Streamlit Community Cloud starts it.
+
+[server]
+# Upload limit in MB (Streamlit's default is 200). Each interaction takes about
+# 0.5 s per 6 MB of CSV, and a parsed file needs over twice its size in memory,
+# so much larger uploads are slow and can exhaust a free Community Cloud app.
+maxUploadSize = 25

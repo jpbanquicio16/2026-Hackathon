@@ -17,6 +17,8 @@ model.
 Requires Python 3.10 or newer (tested on 3.12).
 
 ```bash
+git clone https://github.com/jpbanquicio16/2026-Hackathon.git
+cd 2026-Hackathon
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -222,6 +224,8 @@ The project follows `Hackathon Planning Doc.md` and
   for 100,000 rows × 12 columns; much larger files will feel slow.
 - The dark-mode colour flip follows the theme Streamlit reports. If you switch
   themes mid-session, the map may keep its previous colours until the page reruns.
+- Uploads are limited to 25 MB (roughly 400,000 rows) so that a shared deployment
+  stays responsive. Change `maxUploadSize` in `.streamlit/config.toml` to raise it.
 
 ## Sample data
 
@@ -240,10 +244,28 @@ reported.
 
 ## Deploying
 
-The app is a standard Streamlit app. For example, on Streamlit Community Cloud:
-push the repository to GitHub, create an app pointing at `app.py`, and it installs
-`requirements.txt`. Open the deployed URL in a private window and run through the
-demo once, to check it from a fresh session.
+The app is a standard Streamlit app with no secrets, databases or system packages,
+so it runs on [Streamlit Community Cloud](https://share.streamlit.io) as-is:
+
+1. Push `main` to GitHub (`git push origin main`).
+2. Sign in at <https://share.streamlit.io> with your GitHub account and allow it to
+   access the repository.
+3. Choose **Create app**, then deploy from GitHub with:
+   - Repository: `jpbanquicio16/2026-Hackathon`
+   - Branch: `main`
+   - Main file path: `app.py`
+   - App URL: any free subdomain, for example `model-failure-atlas`
+4. Under **Advanced settings**, choose Python **3.12** (the tested version). No
+   secrets are needed.
+5. Select **Deploy**. The first build installs `requirements.txt` (not
+   `requirements-dev.txt`) and takes a few minutes.
+6. Open the app URL in a private window and run through the
+   [demo walkthrough](#demo-walkthrough-about-two-minutes) once.
+
+After that, every push to `main` redeploys the app. The sample data ships in the
+repository and `.streamlit/config.toml` is read automatically. Community Cloud puts
+apps that get no traffic for a while to sleep, so open the link a few minutes before
+presenting.
 
 ## Project structure
 
@@ -261,4 +283,5 @@ tests/
   test_app.py               User journey via Streamlit's AppTest (selection resets, uploads)
 requirements.txt            Runtime dependencies
 requirements-dev.txt        Adds pytest
+.streamlit/config.toml      Upload size limit
 ```
