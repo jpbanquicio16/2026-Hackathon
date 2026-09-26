@@ -2,16 +2,32 @@
 
 **The model has an overall score, but which kinds of examples does it get wrong?**
 
-Model Failure Atlas is a Streamlit app for exploring classification errors. Choose
-one of two workflows at the top of the page: analyze existing predictions or train
-a classifier and generate held-out predictions. Then pick two numeric features. The app
-reports overall performance, splits both features into ranges, and colours each
-combination of ranges by its error rate. Select a cell to see the exact rows
-behind its numbers.
+Model Failure Atlas is a Streamlit app for exploring where a model goes wrong.
+Choose one of two workflows at the top of the page: analyze existing predictions,
+or train a model and generate held-out predictions. Choose **Classification** or
+**Regression** as the prediction task. Then pick two numeric features. The app reports
+overall performance, splits both features into ranges, and colours each combination
+of ranges by its error rate (classification) or error magnitude (regression). Select
+a cell to see the exact rows behind its numbers.
 
 Both workflows use the same calculations, heatmap and row inspection. Training mode
 labels all results **Held-out test performance** and never substitutes training
 performance for a test result.
+
+## Features at a glance
+
+| Area | What the app does |
+| --- | --- |
+| Tasks | Classification and regression, in both workflows |
+| Models | 7 classifiers and 6 regressors (scikit-learn), compared on identical rows |
+| Splits | Stratified random, grouped (group-disjoint) and time-ordered held-out splits |
+| Validation | Cross-validation on training rows only, optional repeats and hyperparameter search |
+| Imbalance | None, class weights or oversampling, applied inside each training fit |
+| Checks | Target-type guidance, dataset quality summary, target-leakage detection |
+| Metrics | Accuracy, balanced accuracy, precision/recall/F1, normalised confusion matrices, MAE/RMSE/R², ROC-AUC |
+| Probabilities | Confidence analysis, binary threshold exploration, multiclass ROC-AUC (macro/weighted, OvR/OvO) |
+| Explanations | Model-based and permutation feature importance; exact row explanations for linear models and single trees |
+| Provenance | Dataset fingerprint, split ID, full run metadata, session experiment history, report bundle |
 
 For the local Iris dataset, `iris.csv` has 150 flower measurements and true
 `species` labels, but no model predictions. Selecting two measurements as
@@ -47,6 +63,19 @@ streamlit run app.py
 The app opens at <http://localhost:8501> with the sample dataset loaded. To use
 your own data, choose **Upload a CSV** in the sidebar.
 
+Run the tests:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+The suite includes headless Streamlit `AppTest` journeys, so it needs no browser.
+Compare the old and current dataset fingerprints on a large synthetic frame with
+`python scripts/benchmark_fingerprint.py [rows] [columns] [models]` (defaults
+200,000 × 12, three models). Timings are printed, not asserted, because they
+depend on the machine.
+
 ## Two workflows
 
 ### Analyze an existing prediction CSV
@@ -65,44 +94,108 @@ can be legitimate; the app lists these classes. The app cannot establish from
 column values alone whether predictions came from a real model or held-out data.
 It never merges distinct labels such as `01`, `1`, and `1.0`.
 
+With **Regression** selected, the actual and predicted columns must be numeric. The
+app reports MAE, RMSE and R², plots residuals, and maps mean absolute error or the
+share of rows above an absolute-error tolerance you choose.
+
+Uploaded probabilities are used only after you say what they mean, under
+**Class probabilities and binary thresholds**:
+
+- **Two classes:** map one column as P(positive class) and confirm it. This enables
+  ROC-AUC, a precision/recall-by-threshold chart and an exploratory decision
+  threshold (the original prediction is kept in an extra column).
+- **More than two classes:** tick **Map class probability columns**, choose one
+  column per class (columns named after a class are pre-selected) and confirm.
+  The mapping is rejected if a class has no column, a column is used twice, values
+  are non-numeric, blank or outside 0–1, or rows do not sum to 1 within 0.02. Small
+  rounding deviations are renormalised with a warning. The app also warns when a
+  column's name mentions a different class, or when the most probable class rarely
+  matches the predicted label. Missing scores are never invented.
+
 ### Train a model and evaluate it
 
-1. Select **Train a model and evaluate it**, then upload a **Labelled CSV**.
-   The file needs a target class and at least one numeric feature. For Iris, upload
-   `iris.csv`, choose `species`, and retain the four measurement features.
-2. Choose the features, test-set proportion (10–50%), random seed and classifier.
-   The defaults are 20%, seed 42, and 3-nearest neighbors.
-3. Select **Train and evaluate**. The app reports training and held-out row counts,
-   classifier and seed. All performance metrics and map rows use only the test set.
-4. Inspect a map cell. Use **Download held-out prediction CSV** to export the
-   original selected features, retained identifiers, `source_row_id`, actual labels
-   and predictions. Upload this CSV in the first mode to reproduce the analysis.
-   The generated label names are normally `actual_label` and `predicted_label`;
-   a suffix is added if a source column already uses either name. Check the label
-   mapping after re-upload when source names conflict.
+1. Select **Train a model and evaluate it**, choose Classification or Regression,
+   then upload a **Labelled CSV**. The file needs a target and at least one numeric
+   feature. For Iris, upload `iris.csv`, choose `species`, and retain the four
+   measurement features. For regression, choose a numeric target such as
+   `petal_length`.
+2. Review the target guidance, the **Dataset quality summary** and any leakage
+   warnings (see [Checks before training](#checks-before-training)).
+3. Choose the split method, features, test-set proportion (10–50%), random seed and
+   model. The defaults are a random split, 20%, seed 42, and 3-nearest neighbors,
+   with 3-fold cross-validation on the training rows.
+4. Under **Validation, balancing and model comparison**, optionally change the folds
+   and repeats, turn on hyperparameter search, choose a class-imbalance strategy,
+   and pick extra models to compare.
+5. Select **Train and evaluate**. A progress bar reports each validation fit as it
+   finishes. The app reports training and held-out row counts, model, seed and split.
+   All performance metrics and map rows use only the test set.
+6. Inspect a map cell. Use **Download held-out prediction CSV** to export the
+   original selected features, retained identifiers, `source_row_id`, actual labels,
+   predictions and, when available, class probabilities (`probability_0`, … in the
+   order of the sorted class names) and `predicted_confidence`. Upload this CSV in
+   the first mode to reproduce the analysis. The generated label names are normally
+   `actual_label` and `predicted_label`; a suffix is added if a source column already
+   uses either name.
 
-**Data preparation and splitting:**
+#### Models
 
-- The target and detected ID columns cannot be training features. Detection uses
-  ID names, leading-zero numeric codes and row-counter patterns. Other leakage
-  columns (for example measurements taken after the outcome) must be deselected
-  by the user.
-- Initial training support is numeric only. A candidate needs at least 90% finite
-  numbers among its non-missing values and more than one distinct value. Text,
-  categorical and date strings are not encoded; excluded columns are listed.
+| Classifiers | Regressors |
+| --- | --- |
+| 3-nearest neighbors, Logistic regression, Decision tree (`max_depth=5`), Random forest (100 trees), Support vector machine (RBF), Gradient boosting (histogram), Calibrated logistic regression | Ridge regression, 3-nearest neighbors, Decision tree, Random forest, Support vector machine (RBF), Gradient boosting |
+
+Every model runs inside the same pipeline: training-only median imputation, then
+standard scaling, then the estimator. Stochastic estimators receive the selected
+seed. **Hyperparameter search** (grid search, scored by balanced accuracy for
+classification and MAE for regression) needs cross-validation and never sees the
+test rows. Compared models always share identical training and test rows.
+
+**Support vector machine probabilities.** The classifier SVM is wrapped in sigmoid
+(Platt) calibration on 2 stratified folds of the training rows. Predictions are
+the most probable calibrated class, so predicted labels, confidence and probabilities
+agree. Its probabilities feed ROC-AUC, confidence analysis and binary thresholds.
+They are unavailable, with an explicit message, for grouped and time-ordered splits
+(internal random calibration folds would mix groups or periods) and when a class has
+fewer than 2 training rows in a fit.
+
+#### Splits and validation
+
+- **Random:** stratified for classification. Each class needs at least two rows, and
+  both sets must contain every class. If class counts or the proportion make this
+  impossible, the app explains why and shows no results. There is no unstratified
+  fallback.
+- **Grouped:** all rows from a group stay on one side. For classification, the app
+  searches up to 100 group partitions from the same seed for one that puts every
+  class in both sets (the first partition is used unchanged when it already does).
+  When no partition can, it warns that the test set is missing classes, so recall,
+  ROC-AUC and the confusion matrix may be incomplete. It also explains why, for
+  example when every class lives in a single group. Cross-validation uses
+  `StratifiedGroupKFold` (classes balanced across folds, groups never split), or
+  `GroupKFold` for regression.
+- **Time ordered:** train on earlier rows, test on later rows. Equal timestamps stay
+  together, and validation uses expanding time windows (`TimeSeriesSplit`).
+- Random cross-validation uses `StratifiedKFold` / `KFold`, or their repeated
+  versions when repeats are above 1.
+
+#### Class imbalance (classification)
+
+**None**, **Class weights** (`class_weight="balanced"`) or **Oversampling** (random
+minority oversampling). Either is applied inside every training fit, including
+validation and calibration folds; test rows are never reweighted or resampled. Class
+weights are offered only for models that accept them: every classifier except
+3-nearest neighbors. The strategy is recorded in the run metadata, the comparison
+table and the experiment history.
+
+#### Data preparation
+
+- The target, detected ID columns and the group or time column cannot be training
+  features. ID detection uses ID names, leading-zero numeric codes and row-counter
+  patterns.
+- **Features must be numeric.** A candidate needs at least 90% finite numbers among
+  its non-missing values and more than one distinct value. Text, categorical and
+  date strings are **not encoded**; excluded columns are listed with the reason.
 - Target labels use the existing whitespace/missing-value rules. Missing targets
   are counted and removed before splitting; numeric class codes remain text labels.
-- A random stratified split is made **before fitting any preprocessing**. Each
-  class needs at least two rows, and both sets must contain all classes. If class
-  counts, the proportion or the classifier make this impossible, the app explains
-  the problem and shows no performance results. There is no unstratified or
-  training-set fallback.
-- Missing, invalid and infinite feature values are filled using training-set
-  medians; scaling is fitted on training rows too. A feature with no usable values
-  in the training set is rejected. The three choices are **3-nearest neighbors**
-  (`n_neighbors=3`), **Logistic regression** (`max_iter=2000`) and **Decision tree**
-  (`max_depth=5`). All share the imputer/scaler pipeline; stochastic estimators
-  receive the selected seed.
 - Exported feature values remain as uploaded, so missing map-axis values still
   cause map omissions even though the model can predict after imputation. Those
   rows remain in test accuracy. `source_row_id` is the 1-based data-row position in
@@ -110,19 +203,76 @@ It never merges distinct labels such as `01`, `1`, and `1.0`.
 - Changing training settings removes old results until **Train and evaluate** is
   selected again. Inspecting cells or changing map settings reuses the fitted result.
 
-With the checked-in Iris data and default settings, the split is 120 training and
-30 test rows (10 per species). There are **28 correct and 2 incorrect predictions,
-93.3% accuracy**. Source rows 135 and 139 are virginica predicted as versicolor.
-The tests check the exported CSV independently, all 16 default map cells against
-their inspected rows, round-trip upload, and isolation of preprocessing from test
-values. Reproduction was verified with Python 3.12, NumPy 1.26.4 and scikit-learn 1.9.0.
+With the checked-in Iris data, the default split and 3-nearest neighbors, the split
+is 120 training and 30 test rows (10 per species). There are **28 correct and 2
+incorrect predictions, 93.3% accuracy**. Source rows 135 and 139 are virginica
+predicted as versicolor. The tests check the exported CSV independently, all 16
+default map cells against their inspected rows, round-trip upload, and isolation of
+preprocessing from test values. Reproduction was verified with Python 3.12, NumPy
+1.26.4, pandas 3.0, scikit-learn 1.9.0 and Streamlit 1.58.
 
-Run the tests with:
+## Checks before training
 
-```bash
-pip install -r requirements-dev.txt
-pytest
-```
+### Target guidance
+
+The app classifies the chosen target from its distinct values, their share of rows,
+whether they are numeric or whole numbers, and the sample size:
+
+- **Binary** and **multiclass** targets are treated as classes. A few whole-number
+  codes (up to 10) count as multiclass, with a note that an ordinal score could
+  also suit Regression.
+- **Likely continuous**: many distinct decimals, or many whole numbers relative to
+  the rows. With Classification selected, the app warns, for example: *“sulphates”
+  contains 68 distinct numeric values and appears continuous. Classification is
+  unlikely to be appropriate for this target. Consider switching the task type to
+  Regression.*
+- **Ambiguous**: for example 15 whole numbers, a rating scale, or text where most
+  rows have their own value.
+
+Class counts and imbalance warnings are shown only for binary and multiclass
+targets. For a continuous or ambiguous target they appear only after you tick
+**Treat the values as classes anyway**. If training such a target fails, the error
+says how many values occur only once, that the target appears continuous, and to
+try Regression.
+
+### Dataset quality summary
+
+An expander lists each check with a status (Problem, Warning, Review, Info, OK) and
+puts the ones that need attention first:
+
+- missing values, duplicate rows, column types and possible identifier columns;
+- **target type** and **target balance**: number of classes, largest and smallest
+  class with counts and percentages, and the imbalance ratio;
+- **potential leakage**: how many suspicious columns there are, with their names and
+  a short reason for each.
+
+It also shows the per-column table and the class-balance table.
+
+### Leakage detection
+
+Every column is compared with the target. Findings are clues, not proof, and every
+flagged column comes with plain-language reasons. The selected training features get
+a warning above the **Train** button; the run metadata records which flagged
+features were used.
+
+- **Probable leakage (high risk):**
+  - exact copies, including the same numbers written differently (`1` vs `1.00`);
+  - label-encoded or renamed copies of a categorical target (a one-to-one mapping,
+    for example `0 → setosa`);
+  - columns that determine the target, or are determined by it (`is_setosa`), and
+    near-deterministic mappings with a few exceptions;
+  - numeric offsets, scalar multiples, linear transformations, strictly monotonic
+    transformations and near-perfect correlation (|r| ≥ 0.98).
+- **Review the name:** names are split into words, so snake_case, kebab-case,
+  spaces, camelCase, PascalCase and acronyms all work. For example `predictedLabel`
+  becomes “predicted label” and `PREDScore` becomes “pred score”. The app flags
+  prediction words (pred, prediction, predicted, yhat, y_pred, ypred), probability
+  words (prob, proba, probability), outcome words (target, label, outcome) and timing
+  words (future, post, after, excluding post code / after tax). The words `score` and
+  `result` are flagged only next to the target's name or a class name, so
+  `credit_score` is not flagged.
+- Not flagged: identifiers, unique high-cardinality codes, and features that are
+  strongly but not near-perfectly correlated with the target.
 
 ## Demo walkthrough (about two minutes)
 
@@ -192,7 +342,12 @@ validation messages.
 - **Accuracy** = correct ÷ evaluated rows. The denominator is always shown.
 - The **confusion matrix** uses every class that appears as an actual *or* a
   predicted label. Classes that are only ever predicted, or never predicted, are
-  listed under it.
+  listed under it. It can show counts or be normalised by actual class (recall) or
+  predicted class (precision).
+- **Precision, recall, F1 and class balance** give macro and weighted averages,
+  balanced accuracy and a per-class table (support, precision, recall, F1).
+- **Regression** reports MAE, RMSE and R² over every numeric actual/predicted pair.
+  R² is undefined for a constant actual target.
 
 ### The failure map
 
@@ -204,7 +359,10 @@ validation messages.
   feature is left off the map. It still counts in the overall accuracy. The
   number omitted, and why, is shown above the map.
 - **Ranges.** Each feature is split into equal-width ranges (4 by default,
-  adjustable from 2 to 8) spanning the mapped rows' minimum to maximum.
+  adjustable from 2 to 8) spanning the mapped rows' minimum to maximum. The sidebar
+  also offers quantile ranges and custom boundaries, three colour palettes and
+  sample-count overlays. **Filter map by class** restricts the map and its rows to
+  chosen actual or predicted classes; overall metrics keep every row.
   - Edges are rounded to readable values, and the rounded edges are the ones rows
     are assigned by. A value printed on a boundary therefore lands where the labels
     say.
@@ -249,7 +407,70 @@ it predicted**, between 0 and 1. That rules out a positive-class probability and
 raw score. Once confirmed and validated, confidence appears as a bar in the tables,
 and each cell reports the average confidence on wrong and correct predictions.
 Values outside 0–1 are rejected with a message. Accuracy and the map never depend
-on confidence.
+on confidence. In training mode, confidence is the fitted model's probability for
+its predicted class, when the model provides probabilities.
+
+**Confidence and ROC-AUC** compares confidence on correct and incorrect predictions
+and shows a calibration table by confidence bin.
+
+### ROC-AUC
+
+ROC-AUC needs class probabilities. These come from a probabilistic model in
+training mode, or from confirmed uploaded columns (see
+[the analyze workflow](#analyze-an-existing-prediction-csv)).
+
+- **Binary:** the standard ROC-AUC for the second class in sorted order. It is the
+  same under every averaging mode.
+- **Multiclass:** choose **macro** or **weighted** averaging and **one-vs-rest** or
+  **one-vs-one**. Weighted one-vs-rest weights each class by its actual support.
+  Weighted one-vs-one (Hand & Till) weights each class pair by its prevalence. Both
+  match scikit-learn's `roc_auc_score`.
+- When ROC-AUC is unavailable, the app says why: no probabilities (for example an
+  SVM on a grouped split, or a prediction CSV with no confirmed probability
+  columns), invalid values, rows that do not sum to 1, or classes without a
+  probability.
+
+### Explanations
+
+**Feature importance and row explanations** shows:
+
+- **Model-based importance:** impurity importance for trees and forests, or mean
+  absolute standardised coefficient for linear models. Models without built-in
+  importance say so.
+- **Permutation importance** on the held-out rows, for any model.
+- **Exact row explanations:** coefficient × value contributions for uncalibrated
+  linear models, and the decision path for a single decision tree. For other models
+  the app states *"Local row explanations are not available for this model. Global
+  feature importance is shown instead."* and computes permutation importance
+  automatically when the model has no built-in importance. There is no SHAP
+  dependency.
+
+### Experiment history and comparison
+
+Each fitted model is added to **Session experiment history** (the latest 10 runs in
+this browser session). Each row shows: run, UTC timestamp, task, model, target, test
+proportion, split method, group or time column, seed, CV method and folds, whether
+it was tuned, imbalance strategy, primary metric, CV score, held-out score, row
+counts, features and split ID.
+
+You can download the table as CSV and every run's full metadata as JSON, or open one
+run's metadata in the page. **Compare saved runs** shows a side-by-side table only
+when the runs share the same split ID (same data fingerprint, task, target and
+train/test rows). Otherwise it explains that their scores are not a controlled
+comparison.
+
+The dataset fingerprint is a SHA-256 of the column names, dtypes, index and shape
+plus pandas' per-row hashes. It is computed once per upload, cached, and reused by
+every model and rerun.
+
+### Reports and downloads
+
+Downloads include the held-out prediction CSV, training metadata JSON (seed, split
+row IDs, fitted parameters, CV method and folds, imbalance strategy, probability
+method, package versions and timestamp), the displayed confusion matrix, per-class
+metrics, the map table and, after **Prepare evaluation report**, a ZIP bundle, an
+HTML report and audit metadata. Report files reflect the active threshold, tolerance
+and map filters.
 
 ### Consistency checks
 
@@ -288,25 +509,40 @@ The project follows `Hackathon Planning Doc.md` and
 - **Confidence** is suggested only for columns named like `confidence`. Names like
   `probability` or `score` are ambiguous (they may be positive-class scores).
 - **Equal-width ranges** (4 × 4 by default), as both documents recommend.
-- **Per-class filtering** is not included. The planning doc lists it as "if time
-  permits"; the build plan defers per-class views until after the hackathon. The
-  class-mix table covers the most important caveat instead.
+  Quantiles and custom boundaries are optional.
+- **Per-class map filtering** is available under **Filter map by class**. The
+  class-mix table still covers the most important caveat for unfiltered maps.
 - **Selection** uses two range selectors, as the documents recommend. Clicking a
   cell on the map fills the same selectors, so both paths use the same state.
-- **Sequential blue colour scale**, light to dark (flipped in dark mode), with
-  labels on every cell and a table view, so no reading depends on colour alone.
+- **Sequential colour scales** (blue by default), light to dark (flipped in dark
+  mode), with labels on every cell and a table view, so no reading depends on
+  colour alone.
 
 ## Limitations
 
-- Classification only. Every row is weighted equally; per-class metrics
-  (precision, recall) are not computed.
-- Numeric features only, split into equal-width ranges. Skewed features can leave
-  most rows in one range; categorical features can't be axes yet.
-- Training also supports only numeric features. It is a baseline classification
-  workflow, with no regression, categorical encoding, cross-validation, tuning,
-  group-aware splitting or time-aware splitting. Use independently sampled rows;
-  repeated entities and time-ordered data need an external split. Repeatedly tuning
-  against the same test results makes that set less useful as an independent check.
+- **No categorical encoding.** Training features must be numeric; text, categorical
+  and date columns are listed as excluded rather than one-hot or ordinal encoded.
+  Map axes are numeric too.
+- Every row is weighted equally in the overall metrics. Skewed features can leave
+  most equal-width ranges nearly empty; use quantile ranges for those.
+- Leakage detection is heuristic. It catches copies, encodings, deterministic
+  mappings, simple numeric transformations and suspicious names, but not leakage
+  through combinations of features, aggregates computed over the whole dataset, or
+  columns with innocent names recorded after the outcome. Findings are clues, not
+  proof.
+- Grouped splits cannot always cover every class. When groups align with classes the
+  app warns rather than splitting groups. Time-ordered splits are never rebalanced.
+- SVM and calibrated logistic-regression probabilities come from internal random
+  calibration folds, so they are available for random splits only. Calibrated
+  logistic regression is not offered for grouped or time-ordered splits.
+- Exact row explanations cover uncalibrated linear models and single decision trees
+  only; other models get global importance.
+- Experiment history lives in the browser session (latest 10 runs) and is lost when
+  the session ends; download it to keep it. Choosing between models by repeatedly
+  looking at the same test results makes that test set less useful as an independent
+  check. Prefer the cross-validation scores for selection.
+- Target-type guidance uses value counts and ratios. It can misjudge unusual targets,
+  so the app lets you confirm that values are classes.
 - One cell can be selected at a time, and ranges are recalculated from scratch for
   each choice of axes. There is no saved state between sessions.
 - Labels are compared exactly after trimming. Near-duplicates are reported, not
@@ -316,7 +552,8 @@ The project follows `Hackathon Planning Doc.md` and
   rows, not file lines.
 - Analysis recalculates on each interaction; training runs only on an explicit
   button press and its result stays in the current session. Large datasets may be
-  slow, especially with nearest neighbors.
+  slow, especially with nearest neighbors, SVMs and hyperparameter search. The
+  dataset fingerprint, quality summary and leakage review are cached per upload.
 - The dark-mode colour flip follows the theme Streamlit reports. If you switch
   themes mid-session, the map may keep its previous colours until the page reruns.
 - Uploads are limited to 25 MB (roughly 400,000 rows) so that a shared deployment
@@ -365,19 +602,41 @@ presenting.
 ## Project structure
 
 ```text
-app.py                      Streamlit page: layout, widgets, heatmap, selection state
-analysis.py                 All calculations: loading, validation, metrics, ranges, cells
-training.py                 Split, training-only preprocessing, classifiers, held-out export
+app.py                      Streamlit page orchestration: workflows, role mapping, overview,
+                            probabilities/thresholds, ROC-AUC, heatmap, selection, reports
+analysis.py                 Loading, label cleaning, evaluation rows, overview, ranges, cells
+training.py                 Splits, cross-validation, tuning, models, imbalance, calibration,
+                            fingerprint, metadata, comparison/history tables, explanations
+evaluation.py               Metrics: regression, per-class, normalised confusion, thresholds,
+                            ROC-AUC averaging, uploaded probability validation
+diagnostics.py              Target profile and guidance, class balance, dataset quality,
+                            leakage detection
+exports.py                  JSON-safe metadata, report files and ZIP bundle
+ui_experiments.py           Training controls, quality/leakage display, experiment history,
+                            model comparison and explanation UI
 sample_predictions.csv      Synthetic demo data (traffic signs)
+iris.csv                    Labelled Iris data for training mode
 examples/
   churn_predictions.csv     Second synthetic dataset with different columns and messy values
+  iris_heldout_predictions.csv  Held-out Iris predictions (see above)
 scripts/
-  make_sample_data.py       Regenerates both CSVs
+  make_sample_data.py       Regenerates the synthetic CSVs
+  make_iris_evaluation.py   Regenerates the Iris held-out predictions
+  benchmark_fingerprint.py  Old vs current dataset fingerprint timing
 tests/
   test_analysis.py          Hand-worked fixture, ranges, validation, invariants
   test_heatmap.py           Structure of the chart specification
-  test_app.py               User journey via Streamlit's AppTest (selection resets, uploads)
+  test_app.py               Original user journeys via AppTest (selection resets, uploads)
   test_training.py          Reproducible split, export, preprocessing isolation and failures
+  test_extended_training.py CV/tuning isolation, grouped/time splits, oversampling, regressors
+  test_evaluation_features.py  Metrics, thresholds, quantile/custom ranges, confidence
+                            bins, quality checks, report files
+  test_leakage.py           Encoded targets, numeric transforms, tokenised names, non-leaks
+  test_training_hardening.py  Grouped coverage, SVM probabilities, target guidance, class
+                            weights, fingerprint, progress, history, explanation fallbacks
+  test_probability_auc.py   Multiclass ROC-AUC modes vs scikit-learn, probability mapping
+  test_ui_flows.py          AppTest: regression, comparison, thresholds, history, leakage,
+                            target guidance, SVM ROC-AUC, probability mapping
 requirements.txt            Runtime dependencies
 requirements-dev.txt        Adds pytest
 .streamlit/config.toml      Upload size limit

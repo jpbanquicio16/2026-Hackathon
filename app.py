@@ -77,6 +77,7 @@ class Roles:
     task: str = "classification"
     probabilities: dict[str, str] | None = None
     extra_reserved: tuple[str, ...] = ()
+    probability_note: str | None = None  # why a trained model has no class probabilities
 
     @property
     def reserved(self) -> dict[str, str]:
@@ -119,6 +120,12 @@ def theme_is_dark() -> bool:
 @st.cache_data(show_spinner=False, max_entries=4, ttl="1h")
 def load(data: bytes) -> A.LoadedCSV:
     return A.load_csv(data)
+
+
+@st.cache_data(show_spinner=False, max_entries=4, ttl="1h")
+def dataset_fingerprint(data: bytes) -> str:
+    """Computed once per upload and reused by caches, run signatures and metadata."""
+    return T.fingerprint(load(data).frame)
 
 
 # ---------------------------------------------------------------------------
@@ -191,14 +198,16 @@ def training_dataset() -> tuple[bytes, str, str] | None:
 
 
 def training_section(
-    loaded: A.LoadedCSV, name: str, dk: str, task: str = "classification",
+    loaded: A.LoadedCSV, name: str, dk: str, task: str = "classification", fp: str | None = None,
 ) -> tuple[pd.DataFrame, Roles, A.Evaluation, str] | None:
-    trained = U.training_controls(loaded, name, dk, task)
+    trained = U.training_controls(loaded, name, dk, task, fp)
     if trained is None:
         return None
     result, result_key = trained
+    status = result.metadata.get("probability_status")
     roles = Roles(result.actual, result.predicted, result.ids, result.confidence, result.confidence is not None,
-                  task=result.task, probabilities=result.probability_columns)
+                  task=result.task, probabilities=result.probability_columns,
+                  probability_note=None if result.probability_columns or status == "available" else status)
     evaluation = A.evaluate(result.frame, result.actual, result.predicted) if result.task == "classification" else E.regression_evaluation(result.frame, result.actual, result.predicted)
     return result.frame, roles, evaluation, result_key
 
@@ -212,7 +221,7 @@ def pick_column(label: str, options: list[str], guess: str | None, key: str, **k
     return st.selectbox(label, options, index=index, key=key, placeholder="Choose a column", **kwargs)
 
 
-def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, task: str = "classification") -> tuple[Roles, A.Evaluation] | None:
+def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, task: str = "classification", fp: str | None = None) -> tuple[Roles, A.Evaluation] | None:
     st.header("1 · Data", divider="gray")
     synthetic = " · synthetic demo data" if dk == "sample" else ""
     st.caption(f"**{md(name)}** · {len(raw):,} rows × {raw.shape[1]} columns{synthetic}")
@@ -220,7 +229,7 @@ def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, tas
         st.warning(md(note))
     with st.expander("Preview the first rows"):
         st.dataframe(raw.head(20))
-    U.dataset_quality(raw)
+    U.dataset_quality(raw, fp)
 
     columns = list(raw.columns)
     actual_guess, predicted_guess = A.suggest_label_columns(columns)
@@ -474,6 +483,8 @@ def probability_controls(raw, roles, evaluation, dk):
                 positive = st.selectbox("Positive class", classes, index=1, key=f"positive::{dk}")
                 negative = next(c for c in classes if c != positive)
                 probability = roles.probabilities[positive]
+            elif roles.probability_note:
+                st.info(roles.probability_note)
             elif not len(probabilities.columns) and st.checkbox("Map a positive-class probability column", key=f"map_probability::{dk}"):
                 positive = st.selectbox("Positive class", classes, index=1, key=f"positive::{dk}")
                 negative = next(c for c in classes if c != positive)
@@ -516,23 +527,76 @@ def probability_controls(raw, roles, evaluation, dk):
                     st.line_chart(pd.DataFrame(points), x="threshold", y=["precision", "recall"])
         elif len(classes) > 2:
             st.caption("Decision thresholds here apply to binary classification. Multiclass probabilities are used for ROC-AUC when available.")
+            if roles.probability_note:
+                st.info(roles.probability_note)
+            elif probabilities.empty:
+                probabilities, roles, config = class_probability_mapping(raw, roles, evaluation, classes, dk, probabilities)
         else:
             st.caption("At least two classes are needed for binary threshold exploration.")
-        if probabilities.empty:
-            st.caption("ROC-AUC needs class probabilities. A CSV with only predicted labels, or an SVM without probability calibration, cannot supply it.")
+        if probabilities.empty and not roles.probability_note:
+            st.caption("ROC-AUC is unavailable until class probabilities are mapped: a CSV with only predicted labels cannot supply them.")
     return raw, roles, evaluation, probabilities, config
+
+
+MAX_MAPPED_CLASSES = 20
+
+
+def class_probability_mapping(raw, roles, evaluation, classes, dk, probabilities):
+    """Uploaded multiclass CSVs: one confirmed probability column per class, validated in evaluation.py."""
+    if not st.checkbox("Map class probability columns (multiclass ROC-AUC)", key=f"map_multiclass::{dk}"):
+        return probabilities, roles, {}
+    if len(classes) > MAX_MAPPED_CLASSES:
+        st.info(f"There are {len(classes):,} classes; mapping is offered for up to {MAX_MAPPED_CLASSES}.")
+        return probabilities, roles, {}
+    options = [c for c in raw if c not in (roles.actual, roles.predicted, *roles.ids, roles.confidence)]
+    guesses = E.suggest_probability_columns(options, classes)
+    mapping = {}
+    grid = st.columns(min(3, len(classes)))
+    for i, label in enumerate(classes):
+        with grid[i % len(grid)]:
+            choices = [None, *options]
+            mapping[label] = st.selectbox(
+                f"P({md(label)})", choices, index=choices.index(guesses.get(label)),
+                format_func=lambda c: "Choose a column" if c is None else c, key=f"class_probability::{dk}::{label}",
+            )
+    check = E.map_class_probabilities(raw, evaluation.rows, mapping, classes)
+    for error in check.errors:
+        st.error(error)
+    for warning in check.warnings:
+        st.warning(warning)
+    if not check.usable:
+        st.caption("ROC-AUC stays unavailable until every class has a valid probability column.")
+        return probabilities, roles, {}
+    stamp = hashlib.md5(repr(sorted(mapping.items())).encode()).hexdigest()[:10]
+    if not st.checkbox("Each column is P(its class) between 0 and 1, from the same model as the predictions", key=f"multiclass_confirm::{dk}::{stamp}"):
+        st.caption("Probabilities are used only after you confirm what the columns mean.")
+        return probabilities, roles, {}
+    mapped = check.probabilities.reindex(raw.index)
+    return mapped, replace(roles, probabilities=dict(mapping)), {"class_probability_columns": dict(mapping)}
 
 
 def confidence_section(raw, roles, evaluation, probabilities):
     metrics = {}
     with st.expander("Confidence and ROC-AUC"):
-        auc, note = E.probability_auc(evaluation.rows, probabilities)
+        average, strategy = "macro", "ovr"
+        if not probabilities.empty and evaluation.rows["actual"].nunique() > 2:
+            left, right = st.columns(2)
+            average = left.radio("ROC-AUC average", E.AUC_AVERAGES, horizontal=True, key="auc_average")
+            strategy = right.radio("Multiclass ROC-AUC", list(E.AUC_STRATEGIES), format_func=E.AUC_STRATEGIES.get, horizontal=True, key="auc_multi_class")
+        auc, note = E.probability_auc(evaluation.rows, probabilities, average, strategy)
         if auc is not None:
             st.metric("ROC-AUC", f"{auc:.4f}")
-            metrics["roc_auc"] = auc
-        st.caption(note)
+            metrics.update(roc_auc=auc, roc_auc_average=average, roc_auc_multi_class=E.AUC_STRATEGIES[strategy])
+            st.caption(note)
+        elif roles.probability_note:
+            st.info("ROC-AUC is unavailable because this model does not provide class probabilities. " + roles.probability_note)
+        else:
+            st.info(note)
         if not roles.confidence_ok:
-            st.caption("Choose and confirm a predicted-class confidence column under Optional columns to inspect confidence distributions.")
+            if roles.probability_note:
+                st.info("Confidence analysis is unavailable because this model does not provide class probabilities.")
+            else:
+                st.caption("Choose and confirm a predicted-class confidence column under Optional columns to inspect confidence distributions.")
             return metrics
         values = A.parse_numeric(raw.loc[evaluation.rows.index, roles.confidence]).values
         valid = values.notna() & values.between(0, 1)
@@ -1048,15 +1112,16 @@ def main() -> None:
         st.error(f"**{md(name)}** can't be used: {exc}")
         return
     raw = loaded.frame
+    fp = dataset_fingerprint(data)
 
     if mode == TRAIN_MODE:
-        trained = training_section(loaded, name, dk, task)
+        trained = training_section(loaded, name, dk, task, fp)
         if trained is None:
             return
         raw, roles, evaluation, dk = trained
     else:
         try:
-            prepared = data_section(raw, loaded, name, dk, task)
+            prepared = data_section(raw, loaded, name, dk, task, fp)
         except A.DataError as exc:
             st.error(str(exc))
             return

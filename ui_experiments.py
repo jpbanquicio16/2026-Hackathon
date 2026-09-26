@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 
 import pandas as pd
 import streamlit as st
@@ -11,28 +12,67 @@ import diagnostics as D
 import exports as X
 import training as T
 
-
-@st.cache_data(show_spinner=False, max_entries=4, ttl="1h")
-def quality_table(raw):
-    return D.dataset_summary(raw), D.duplicate_count(raw)
+STATUS_ORDER = {"Problem": 0, "Warning": 1, "Review": 2, "Not applicable": 3, "Info": 4, "OK": 5}
 
 
-def dataset_quality(raw):
-    with st.expander("Dataset quality summary"):
-        table, duplicates = quality_table(raw)
+# Keyed by the dataset fingerprint; the leading underscore stops Streamlit re-hashing the frame.
+@st.cache_data(show_spinner=False, max_entries=8, ttl="1h")
+def quality_table(fp, _raw):
+    return D.dataset_summary(_raw), D.duplicate_count(_raw)
+
+
+@st.cache_data(show_spinner=False, max_entries=16, ttl="1h")
+def leakage_review(fp, target, features, _raw):
+    return D.leakage_findings(_raw, target, None if features is None else list(features))
+
+
+def show_leakage(findings, caption=None):
+    for finding in findings:
+        heading = "Probable target leakage" if finding.risk == "high" else "Review the column name"
+        st.markdown(f"**{md(finding.feature)}** · {heading}\n" + "\n".join(f"* {md(reason)}" for reason in finding.reasons))
+    if caption:
+        st.caption(caption)
+
+
+def md(text) -> str:
+    """Escape text from the CSV so Markdown never reformats it."""
+    return re.sub(r"([\\`*_{}\[\]()#+\-.!|$<>~])", r"\\\1", str(text))
+
+
+def dataset_quality(raw, fp=None, target=None, task="classification", treat_as_classes=False):
+    fp = fp or T.fingerprint(raw)
+    table, duplicates = quality_table(fp, raw)
+    findings = leakage_review(fp, target, None, raw) if target is not None else None
+    overview = D.quality_overview(raw, target, task, treat_as_classes, summary=table, findings=findings)
+    attention = int(overview["status"].isin(["Problem", "Warning"]).sum())
+    label = "Dataset quality summary" + (f" · {attention} check{'s' if attention != 1 else ''} need attention" if attention else "")
+    with st.expander(label):
+        st.caption("Is this dataset safe and sensible to train on? Problems and warnings are listed first.")
+        st.dataframe(overview.sort_values("status", key=lambda s: s.map(STATUS_ORDER), kind="stable"), hide_index=True)
+        st.markdown("**Columns**")
         st.dataframe(table, hide_index=True)
         st.caption(f"{duplicates:,} exact duplicate rows beyond the first occurrence. Rows are retained; review whether repeated observations should stay together in a grouped split.")
+        if target is not None and task == "classification":
+            guidance = D.target_guidance(raw, target, task, treat_as_classes)
+            if guidance.show_class_diagnostics:
+                st.markdown("**Target class balance**")
+                counts = D.class_counts(raw[target])
+                st.dataframe(counts.assign(share=counts["share"] * 100), hide_index=True, column_config={"share": st.column_config.NumberColumn("share (%)", format="%.1f")})
+        if findings:
+            st.markdown("**Potential leakage across all columns**")
+            show_leakage(findings, "Checked against every column, including ones not selected for training.")
+    return findings
 
 
-def training_controls(loaded, name, dk, task):
+def training_controls(loaded, name, dk, task, fp=None):
     raw = loaded.frame
+    fp = fp or T.fingerprint(raw)
     st.header("1 · Train a classifier" if task == "classification" else "1 · Train a regressor", divider="gray")
     st.caption(f"{name} · {len(raw):,} rows × {raw.shape[1]} columns")
     for note in loaded.notes:
         st.warning(note)
     with st.expander("Preview the first rows"):
         st.dataframe(raw.head(20))
-    dataset_quality(raw)
     guess = D.target_suggestion(raw)
     target = st.selectbox(
         "Target column", list(raw.columns), index=list(raw.columns).index(guess) if guess else None,
@@ -40,15 +80,24 @@ def training_controls(loaded, name, dk, task):
         help="Classification predicts classes; Regression predicts a numeric measurement. A suggestion is not proof of the column's meaning.",
     )
     if target is None:
+        dataset_quality(raw, fp)
         st.session_state.pop("training_result", None)
         st.info("Choose a target column to see the available features.")
         return None
-    for warning in D.target_warnings(raw, target, task):
+    profile = D.target_profile(raw, target)
+    treat_as_classes = False
+    if task == "classification" and profile.kind in ("continuous", "ambiguous"):
+        treat_as_classes = st.checkbox(
+            f"Treat the values of “{md(target)}” as classes anyway", key=f"treat_classes::{dk}::{target}",
+            help="Shows class counts and imbalance diagnostics for these values. Training still needs at least two rows per value.",
+        )
+    guidance = D.target_guidance(raw, target, task, treat_as_classes)
+    st.caption(f"Target type: {profile.description} ({md(profile.reason)}).")
+    for warning in guidance.warnings:
         st.warning(warning)
-    if task == "classification":
-        with st.expander("Target class balance"):
-            counts = D.class_counts(raw[target])
-            st.dataframe(counts.assign(share=counts["share"] * 100), hide_index=True, column_config={"share": st.column_config.NumberColumn("share (%)", format="%.1f")})
+    for note in guidance.notes:
+        st.caption(note)
+    dataset_quality(raw, fp, target, task, treat_as_classes)
 
     split_method = st.selectbox("Split method", T.SPLITS, key=f"split::{dk}::{task}")
     split_column = None
@@ -56,7 +105,7 @@ def training_controls(loaded, name, dk, task):
         split_column = st.selectbox("Group column" if split_method == "Grouped" else "Time column", [c for c in raw if c != target], index=None, key=f"split_column::{dk}::{split_method}")
     st.caption({
         "Random": "Random held-out split; classification is stratified. Use independently sampled examples.",
-        "Grouped": "All rows from a group stay together. The test proportion applies to groups, so the row proportion can differ. Validation also holds out complete groups.",
+        "Grouped": "All rows from a group stay together. The test proportion applies to groups, so the row proportion can differ. For classification, the app looks for a group partition that puts every class in both sets and warns when that is impossible. Validation also holds out complete groups, balancing classes across folds.",
         "Time ordered": "Train on earlier rows and test on later rows. Equal timestamps stay together. Validation uses expanding time windows. Use a parseable date/time column; invalid times are excluded.",
     }[split_method])
     options = T.feature_choices(raw, target, split_column)
@@ -69,10 +118,10 @@ def training_controls(loaded, name, dk, task):
     )
     with st.expander("Columns excluded from training features"):
         st.dataframe(pd.DataFrame(options.excluded.items(), columns=["column", "reason"]), hide_index=True)
-    clues = D.leakage_warnings(raw, target, tuple(features))
-    if not clues.empty:
+    selected_leakage = leakage_review(fp, target, tuple(features), raw) if features else []
+    if selected_leakage:
         st.warning("Possible target leakage: review these selected features before training.")
-        st.dataframe(clues, hide_index=True)
+        show_leakage(selected_leakage)
     st.caption("Leakage checks are clues, not proof. Confirm every feature would be available when making a real prediction.")
     left, middle, right = st.columns(3)
     with left:
@@ -91,16 +140,28 @@ def training_controls(loaded, name, dk, task):
                 repeats = int(st.number_input("Validation repeats", 1, 5, 1, key=f"repeats::{dk}::{task}"))
             tune = st.checkbox("Select hyperparameters using cross-validation", key=f"tune::{dk}::{task}")
             st.caption("Selection uses balanced accuracy for classification and MAE for regression. The final test set is never used to fit preprocessing, choose parameters or rank validation candidates.")
-        balance = st.checkbox("Balance training classes by random oversampling", key=f"balance::{dk}") if task == "classification" else False
-        if balance:
-            st.caption("Minority classes are resampled inside each training fit, including validation and calibration folds. Test rows are never resampled. Probabilities may need recalibration under the real class distribution.")
-        extra = st.multiselect("Also compare these models", [m for m in models if m != model], key=f"compare::{dk}::{task}::{model}")
+        imbalance = "None"
+        if task == "classification":
+            choices = [s for s in T.IMBALANCE_STRATEGIES if s != "Class weights" or T.supports_class_weights(model)]
+            imbalance = st.selectbox("Class imbalance handling", choices, key=f"imbalance::{dk}::{model}",
+                                     help="Class weights reweight the loss; oversampling repeats minority rows. Only one strategy is applied.")
+            if not T.supports_class_weights(model):
+                st.caption(f"{model} does not accept class weights, so only oversampling is offered.")
+            if imbalance == "Oversampling":
+                st.caption("Minority classes are resampled inside each training fit, including validation and calibration folds. Test rows are never resampled. Probabilities may need recalibration under the real class distribution.")
+            elif imbalance == "Class weights":
+                st.caption("class_weight='balanced' weights each class inversely to its training frequency inside every fit. Test rows are never reweighted.")
+        compatible = [m for m in models if m != model and (imbalance != "Class weights" or T.supports_class_weights(m))]
+        extra = st.multiselect("Also compare these models", compatible, key=f"compare::{dk}::{task}::{model}::{imbalance}")
+        if imbalance == "Class weights" and len(compatible) < len(models) - 1:
+            st.caption("Models without class-weight support are not offered for comparison under this strategy.")
         st.caption("Compared models use identical train/test rows. Prefer validation scores for model selection; repeatedly choosing a model from test results makes those results exploratory.")
 
     settings = dict(test_size=test_percent / 100, seed=int(seed), task=task, split_method=split_method,
-                    split_column=split_column, cv_folds=folds, cv_repeats=repeats, tune=tune, balance=balance)
+                    split_column=split_column, cv_folds=folds, cv_repeats=repeats, tune=tune, imbalance=imbalance,
+                    dataset_fingerprint=fp)
     selected_models = [model, *extra]
-    signature = hashlib.sha256(json.dumps([T.fingerprint(raw), target, features, selected_models, settings], sort_keys=True).encode()).hexdigest()
+    signature = hashlib.sha256(json.dumps([fp, target, features, selected_models, settings], sort_keys=True).encode()).hexdigest()
     if st.session_state.get("training_signature") != signature:
         st.session_state["training_signature"] = signature
         st.session_state.pop("training_result", None)
@@ -119,8 +180,11 @@ def training_controls(loaded, name, dk, task):
                 st.caption("Reused the fitted models for these exact data and settings.")
             else:
                 progress = st.progress(0, text="Preparing training and held-out rows…")
-                def update(i, total, label):
-                    progress.progress(i / total, text=f"{label}: {i} of {total} models complete")
+
+                def update(position, total, label):
+                    current = min(int(position) + 1, total)
+                    progress.progress(min(position / total, 1.0), text=f"Model {current} of {total}: {label}")
+
                 with st.spinner("Fitting models and validating on training folds…"):
                     results = T.compare_models(raw, target, tuple(features), selected_models, progress=update, **settings)
                 progress.empty()
@@ -145,18 +209,23 @@ def training_controls(loaded, name, dk, task):
     saved_choice = None
     if history:
         with st.expander("Session experiment history"):
-            keys = list(history)
-            table = T.comparison_table(list(history.values()))
-            table.insert(0, "run", keys)
+            table = T.history_table(history)
             st.dataframe(table, hide_index=True)
+            full = {key: X.json_safe(run.metadata) for key, run in history.items()}
             st.download_button("Download experiment history", table.to_csv(index=False).encode(), "experiment_history.csv", on_click="ignore")
+            st.download_button("Download full run metadata (JSON)", X.json_bytes(full), "experiment_history.json", mime="application/json", on_click="ignore")
             st.caption("The latest 10 fitted results stay in this session. Rows with the same split ID are comparable on identical data partitions; different seeds or splits are separate experiments.")
+            keys = list(history)
+            details = st.selectbox("Show full metadata for run", keys, index=None, key=f"history_details::{dk}")
+            if details:
+                st.json(full[details], expanded=False)
             compare_keys = st.multiselect("Compare saved runs", keys, key=f"history_compare::{dk}")
             if compare_keys:
                 chosen = [history[k] for k in compare_keys if k in history]
-                if len({r.metadata["split_id"] for r in chosen}) > 1:
-                    st.warning("These runs use different test sets or targets. Their scores are not a controlled model comparison.")
-                st.dataframe(T.comparison_table(chosen), hide_index=True)
+                if T.comparable(chosen):
+                    st.dataframe(T.comparison_table(chosen), hide_index=True)
+                else:
+                    st.warning("These runs use different test sets or targets. Their scores are not a controlled model comparison, so no side-by-side table is shown; compare their split details in the history above.")
             saved_choice = st.selectbox("View a saved run", keys, index=None, key=f"history_view::{dk}")
     batch = st.session_state.get("training_batch", [])
     if saved_choice:
@@ -173,10 +242,15 @@ def training_controls(loaded, name, dk, task):
     else:
         st.info("Choose settings, then select Train and evaluate to generate held-out predictions.")
         return None
+    if not saved_choice:
+        result.metadata["leakage_review"] = [
+            {"feature": f.feature, "risk": f.risk, "reasons": list(f.reasons)}
+            for f in selected_leakage if f.feature in result.features
+        ]
     st.session_state["training_result"] = result
     run_id = result.metadata["run_id"]
     st.success(f"{len(result.train_rows):,} training rows · {len(result.test_rows):,} held-out test rows · {result.classifier} · random seed {result.seed} · {result.metadata['split_method'].lower()} split")
-    st.caption(f"Task: {result.task}. Target: {result.metadata['target']}. Features: {', '.join(result.features)}.")
+    st.caption(f"Task: {result.task}. Target: {result.metadata['target']}. Features: {', '.join(result.features)}. Class imbalance handling: {result.metadata.get('imbalance_strategy', 'None').lower()}.")
     if result.missing_targets:
         st.warning(f"{result.missing_targets:,} missing or unusable targets excluded before splitting.")
     if result.metadata["missing_split_values"]:
@@ -186,7 +260,7 @@ def training_controls(loaded, name, dk, task):
     if not result.cv_results.empty:
         st.subheader("Cross-validation performance")
         meta = result.metadata
-        st.caption(f"Training data only · {meta['cv_splits']} validation splits · {meta['cv_metric']}: {meta['cv_mean']:.4f} ± {meta['cv_std']:.4f} (standard deviation across folds, not a confidence interval).")
+        st.caption(f"Training data only · {meta.get('cv_method', 'folds')} · {meta['cv_splits']} validation splits · {meta['cv_metric']}: {meta['cv_mean']:.4f} ± {meta['cv_std']:.4f} (standard deviation across folds, not a confidence interval).")
         st.dataframe(result.cv_results, hide_index=True)
     if st.checkbox("Show training performance", key=f"show_training::{run_id}"):
         st.subheader("Training performance")
@@ -202,20 +276,34 @@ def training_controls(loaded, name, dk, task):
 
 def model_explanations(result, key):
     with st.expander("Feature importance and row explanations"):
+        note, built_in = T.model_importance(result)
+        st.markdown("**Model-based importance**")
+        st.caption(note)
+        if not built_in.empty:
+            st.dataframe(built_in, hide_index=True)
+        st.markdown("**Permutation importance**")
         st.caption("Permutation importance measures the drop in test performance after shuffling a feature (balanced accuracy for classification, negative MAE for regression). It is exploratory, can be negative, and does not establish causation; correlated features can mask one another.")
         cache = st.session_state.setdefault("importance_cache", {})
-        if st.button("Calculate permutation importance", key=f"importance::{key}"):
+
+        def permutation():
             with st.spinner("Shuffling held-out features (3 repeats, up to 500 rows)…"):
                 cache[key] = T.permutation_scores(result)
             while len(cache) > 10:
                 cache.pop(next(iter(cache)))
-        if key in cache:
-            st.dataframe(cache[key], hide_index=True)
-            st.bar_chart(cache[key], x="feature", y="importance", horizontal=True)
+
+        if st.button("Calculate permutation importance", key=f"importance::{key}"):
+            permutation()
         if st.checkbox("Explain an individual test row", key=f"explain_row::{key}"):
             row = int(st.number_input("Row in held-out CSV", 1, len(result.frame), 1, key=f"explain_id::{key}"))
             st.dataframe(result.frame.loc[[row]])
             note, table = T.row_explanation(result, row)
-            st.caption(note + " This explanation refers to the original fitted model, before any threshold exploration.")
-            if not table.empty:
+            if table.empty:
+                st.info(note)
+                if built_in.empty and key not in cache:
+                    permutation()
+            else:
+                st.caption(note + " This explanation refers to the original fitted model, before any threshold exploration.")
                 st.dataframe(table, hide_index=True)
+        if key in cache:
+            st.dataframe(cache[key], hide_index=True)
+            st.bar_chart(cache[key], x="feature", y="importance", horizontal=True)
