@@ -2,15 +2,34 @@
 
 **The model has an overall score, but which kinds of examples does it get wrong?**
 
-Model Failure Atlas is a Streamlit app for exploring classification errors. Load a
-CSV of predictions a model has already made (one row per example), choose the
-actual-label and predicted-label columns, and pick two numeric features. The app
+Model Failure Atlas is a Streamlit app for exploring classification errors. Choose
+one of two workflows at the top of the page: analyze existing predictions or train
+a classifier and generate held-out predictions. Then pick two numeric features. The app
 reports overall performance, splits both features into ranges, and colours each
 combination of ranges by its error rate. Select a cell to see the exact rows
 behind its numbers.
 
-The app only **analyses existing predictions**. It does not train, load or run a
-model.
+Both workflows use the same calculations, heatmap and row inspection. Training mode
+labels all results **Held-out test performance** and never substitutes training
+performance for a test result.
+
+For the local Iris dataset, `iris.csv` has 150 flower measurements and true
+`species` labels, but no model predictions. Selecting two measurements as
+actual and predicted labels produces an invalid model evaluation. The app warns
+when label choices look like continuous measurements; numeric class codes can
+still be valid labels when they represent classes.
+
+Run `python scripts/make_iris_evaluation.py` with `pandas`, `numpy`, and
+`scikit-learn` installed to regenerate
+`examples/iris_heldout_predictions.csv`. The script uses a stratified 80/20
+train/test split with seed 42 (120 training rows and 30 held-out rows). It fits
+`StandardScaler` and a 3-nearest-neighbors classifier on **training rows only**,
+using all four measurements. It predicts only the held-out rows and exports
+their source-row `example_id`, four features, `actual_species`, and
+`predicted_species`. Upload that file, choose the two species columns as labels,
+and use `sepal_length` and `sepal_width` as the default map axes. The 30 exported
+rows are the complete test set; the other 120 rows are never included in the
+app's performance numbers.
 
 ## Quick start
 
@@ -27,6 +46,76 @@ streamlit run app.py
 
 The app opens at <http://localhost:8501> with the sample dataset loaded. To use
 your own data, choose **Upload a CSV** in the sidebar.
+
+## Two workflows
+
+### Analyze an existing prediction CSV
+
+1. Select **Analyze an existing prediction CSV** at the top of the page.
+2. Use the synthetic sample, or choose **Upload a CSV** in the sidebar.
+3. Choose actual and predicted label columns. Both must describe class outcomes
+   for the same examples. Review the missing-label and diagnostic warnings.
+4. Choose two numeric map axes. Click a cell or use the range selectors to inspect
+   its rows, and optionally filter the detail table to errors only.
+
+Numeric class codes are supported. Incompatible numeric/text label kinds,
+high-cardinality numeric labels and class sets with no overlap produce advisory
+warnings, not rejection. Predictions of classes absent from the actual test labels
+can be legitimate; the app lists these classes. The app cannot establish from
+column values alone whether predictions came from a real model or held-out data.
+It never merges distinct labels such as `01`, `1`, and `1.0`.
+
+### Train a model and evaluate it
+
+1. Select **Train a model and evaluate it**, then upload a **Labelled CSV**.
+   The file needs a target class and at least one numeric feature. For Iris, upload
+   `iris.csv`, choose `species`, and retain the four measurement features.
+2. Choose the features, test-set proportion (10–50%), random seed and classifier.
+   The defaults are 20%, seed 42, and 3-nearest neighbors.
+3. Select **Train and evaluate**. The app reports training and held-out row counts,
+   classifier and seed. All performance metrics and map rows use only the test set.
+4. Inspect a map cell. Use **Download held-out prediction CSV** to export the
+   original selected features, retained identifiers, `source_row_id`, actual labels
+   and predictions. Upload this CSV in the first mode to reproduce the analysis.
+   The generated label names are normally `actual_label` and `predicted_label`;
+   a suffix is added if a source column already uses either name. Check the label
+   mapping after re-upload when source names conflict.
+
+**Data preparation and splitting:**
+
+- The target and detected ID columns cannot be training features. Detection uses
+  ID names, leading-zero numeric codes and row-counter patterns. Other leakage
+  columns (for example measurements taken after the outcome) must be deselected
+  by the user.
+- Initial training support is numeric only. A candidate needs at least 90% finite
+  numbers among its non-missing values and more than one distinct value. Text,
+  categorical and date strings are not encoded; excluded columns are listed.
+- Target labels use the existing whitespace/missing-value rules. Missing targets
+  are counted and removed before splitting; numeric class codes remain text labels.
+- A random stratified split is made **before fitting any preprocessing**. Each
+  class needs at least two rows, and both sets must contain all classes. If class
+  counts, the proportion or the classifier make this impossible, the app explains
+  the problem and shows no performance results. There is no unstratified or
+  training-set fallback.
+- Missing, invalid and infinite feature values are filled using training-set
+  medians; scaling is fitted on training rows too. A feature with no usable values
+  in the training set is rejected. The three choices are **3-nearest neighbors**
+  (`n_neighbors=3`), **Logistic regression** (`max_iter=2000`) and **Decision tree**
+  (`max_depth=5`). All share the imputer/scaler pipeline; stochastic estimators
+  receive the selected seed.
+- Exported feature values remain as uploaded, so missing map-axis values still
+  cause map omissions even though the model can predict after imputation. Those
+  rows remain in test accuracy. `source_row_id` is the 1-based data-row position in
+  the labelled input; the detail table's `row` is the position in the exported CSV.
+- Changing training settings removes old results until **Train and evaluate** is
+  selected again. Inspecting cells or changing map settings reuses the fitted result.
+
+With the checked-in Iris data and default settings, the split is 120 training and
+30 test rows (10 per species). There are **28 correct and 2 incorrect predictions,
+93.3% accuracy**. Source rows 135 and 139 are virginica predicted as versicolor.
+The tests check the exported CSV independently, all 16 default map cells against
+their inspected rows, round-trip upload, and isolation of preprocessing from test
+values. Reproduction was verified with Python 3.12, NumPy 1.26.4 and scikit-learn 1.9.0.
 
 Run the tests with:
 
@@ -59,7 +148,7 @@ imaginary traffic-sign classifier on 1,200 images (see [Sample data](#sample-dat
    bad (45 of 72 wrong), even though the generator never uses speed directly: blur
    increases with speed. The map shows **where** errors concentrate, not **why**.
 
-## CSV requirements
+## Existing-prediction CSV requirements
 
 - A header row, then **one row per evaluated example** (one prediction per row).
 - **An actual-label column and a predicted-label column.** They can have any names:
@@ -194,8 +283,8 @@ The project follows `Hackathon Planning Doc.md` and
 - **Row identity** is the position in the file. An ID column, if present, is
   shown too.
 - **Identifier detection** pre-fills columns whose name contains an ID word, or
-  whose values are zero-padded codes or a 1..n counter. It is only a default; you
-  can edit it under "Optional columns".
+  whose values are zero-padded codes or a 1..n counter. In existing-prediction mode,
+  you can edit it under "Optional columns". Training mode excludes detected IDs.
 - **Confidence** is suggested only for columns named like `confidence`. Names like
   `probability` or `score` are ambiguous (they may be positive-class scores).
 - **Equal-width ranges** (4 × 4 by default), as both documents recommend.
@@ -213,6 +302,11 @@ The project follows `Hackathon Planning Doc.md` and
   (precision, recall) are not computed.
 - Numeric features only, split into equal-width ranges. Skewed features can leave
   most rows in one range; categorical features can't be axes yet.
+- Training also supports only numeric features. It is a baseline classification
+  workflow, with no regression, categorical encoding, cross-validation, tuning,
+  group-aware splitting or time-aware splitting. Use independently sampled rows;
+  repeated entities and time-ordered data need an external split. Repeatedly tuning
+  against the same test results makes that set less useful as an independent check.
 - One cell can be selected at a time, and ranges are recalculated from scratch for
   each choice of axes. There is no saved state between sessions.
 - Labels are compared exactly after trimming. Near-duplicates are reported, not
@@ -220,8 +314,9 @@ The project follows `Hackathon Planning Doc.md` and
 - A row with more fields than the header makes the whole file unreadable (with a
   message naming the line). Blank lines are skipped, so row numbers count data
   rows, not file lines.
-- The whole page recalculates on every interaction. That takes about half a second
-  for 100,000 rows × 12 columns; much larger files will feel slow.
+- Analysis recalculates on each interaction; training runs only on an explicit
+  button press and its result stays in the current session. Large datasets may be
+  slow, especially with nearest neighbors.
 - The dark-mode colour flip follows the theme Streamlit reports. If you switch
   themes mid-session, the map may keep its previous colours until the page reruns.
 - Uploads are limited to 25 MB (roughly 400,000 rows) so that a shared deployment
@@ -272,6 +367,7 @@ presenting.
 ```text
 app.py                      Streamlit page: layout, widgets, heatmap, selection state
 analysis.py                 All calculations: loading, validation, metrics, ranges, cells
+training.py                 Split, training-only preprocessing, classifiers, held-out export
 sample_predictions.csv      Synthetic demo data (traffic signs)
 examples/
   churn_predictions.csv     Second synthetic dataset with different columns and messy values
@@ -281,6 +377,7 @@ tests/
   test_analysis.py          Hand-worked fixture, ranges, validation, invariants
   test_heatmap.py           Structure of the chart specification
   test_app.py               User journey via Streamlit's AppTest (selection resets, uploads)
+  test_training.py          Reproducible split, export, preprocessing isolation and failures
 requirements.txt            Runtime dependencies
 requirements-dev.txt        Adds pytest
 .streamlit/config.toml      Upload size limit

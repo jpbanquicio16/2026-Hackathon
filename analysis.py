@@ -306,6 +306,42 @@ def evaluate(raw: pd.DataFrame, actual_col: str, predicted_col: str) -> Evaluati
     )
 
 
+def label_role_warning(raw: pd.DataFrame, actual_col: str, predicted_col: str) -> str | None:
+    """Flag likely measurements without rejecting legitimate numeric class codes."""
+    clues = []
+    kinds = []
+    class_sets = []
+    for role, column in (("Actual", actual_col), ("Predicted", predicted_col)):
+        labels = clean_labels(raw[column]).dropna()
+        if labels.empty:
+            continue
+        class_sets.append(set(labels))
+        numeric = pd.to_numeric(labels, errors="coerce")
+        numeric_share = float(np.isfinite(numeric).mean())
+        is_numeric = numeric_share >= MIN_NUMERIC_SHARE
+        kinds.append("numeric" if numeric_share == 1 else "text" if numeric_share == 0 else "mixed numeric/text")
+        distinct = labels.nunique()
+        if is_numeric and distinct > max(MAX_SUSPECT_CLASSES, int(0.2 * len(labels))):
+            clues.append(f"{role.lower()} column “{column}” has {distinct:,} distinct numeric values")
+    if len(kinds) == 2 and kinds[0] != kinds[1]:
+        clues.append(f"the actual labels are {kinds[0]} and the predicted labels are {kinds[1]}")
+    if len(class_sets) == 2 and not class_sets[0].intersection(class_sets[1]):
+        clues.append("the actual and predicted class sets do not overlap")
+    if not clues:
+        return None
+    return (
+        "Check the label columns: " + "; ".join(clues) + ". These may be measurements "
+        "rather than class labels. Actual and predicted must name the same class "
+        "outcomes for each row. Numeric class codes are valid when they really are "
+        "classes. A model can legitimately predict classes absent from this test set; "
+        "these checks are diagnostic, not rejection rules. Labels are not converted or merged. "
+        "Confirm the meaning of these columns before interpreting accuracy or errors."
+    )
+
+
+MAX_SUSPECT_CLASSES = 30
+
+
 @dataclass(frozen=True)
 class Overview:
     n_evaluated: int

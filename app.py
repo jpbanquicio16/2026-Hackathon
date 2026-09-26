@@ -1,10 +1,9 @@
-"""Model Failure Atlas: where does a classifier get things wrong?
+"""Ai Error Map: where does a classifier get things wrong?
 
     streamlit run app.py
 
-The app analyses predictions that already exist in a CSV. It never trains
-or runs a model. Every number comes from analysis.py; this file only lays
-out the page and keeps the interaction state consistent.
+Analyze existing predictions or train a baseline on a labelled CSV.
+Both workflows use analysis.py for metrics, maps, and row inspection.
 """
 
 from __future__ import annotations
@@ -20,8 +19,11 @@ import pandas as pd
 import streamlit as st
 
 import analysis as A
+import training as T
 
 SAMPLE_PATH = Path(__file__).parent / "sample_predictions.csv"
+ANALYZE_MODE = "Analyze an existing prediction CSV"
+TRAIN_MODE = "Train a model and evaluate it"
 
 # Error rate is a magnitude, so it gets one hue from light to dark: steps
 # 100-700 of a blue ramp, spread evenly over a fixed 0-100% domain. Dark
@@ -162,6 +164,104 @@ def map_settings() -> Settings:
     return Settings(int(n_bins), int(small_n))
 
 
+def training_dataset() -> tuple[bytes, str, str] | None:
+    st.subheader("Training data")
+    upload = st.file_uploader(
+        "Labelled CSV", type=["csv"], key="train_upload",
+        help="One row per example, with a target class and numeric feature columns.",
+    )
+    if upload is None:
+        return None
+    return upload.getvalue(), upload.name, f"train:{upload.file_id}"
+
+
+def training_section(
+    loaded: A.LoadedCSV, name: str, dk: str,
+) -> tuple[pd.DataFrame, Roles, A.Evaluation, str] | None:
+    raw = loaded.frame
+    st.header("1 · Train a classifier", divider="gray")
+    st.caption(f"**{md(name)}** · {len(raw):,} rows × {raw.shape[1]} columns")
+    for note in loaded.notes:
+        st.warning(md(note))
+    with st.expander("Preview the first rows"):
+        st.dataframe(raw.head(20))
+    guess, _ = A.suggest_label_columns(raw.columns)
+    target = pick_column(
+        "Target column", list(raw.columns), guess or ("species" if "species" in raw.columns else None),
+        f"target::{dk}", help="The class you want to predict. Numeric class codes are allowed.",
+    )
+    if target is None:
+        st.session_state.pop("training_result", None)
+        st.info("Choose a target column to see the available training features.")
+        return None
+    options = T.feature_choices(raw, target)
+    features = st.multiselect(
+        "Training features", options.usable, default=list(options.usable),
+        key=f"training_features::{dk}::{target}",
+        help="The target and detected identifiers cannot be training features. Remove any other leakage columns.",
+    )
+    st.caption(
+        "Numeric features only: at least 90% of non-missing values must be finite numbers. "
+        "Text/categorical, date and constant columns are excluded. Blank, invalid and infinite "
+        "feature values use the training-set median. Scaling also uses training rows only. "
+        "Rows missing a target are excluded before splitting. The map uses original feature "
+        "values, so rows missing an axis value count in accuracy but are omitted from that map."
+    )
+    if options.excluded:
+        with st.expander("Columns excluded from training features"):
+            st.markdown("\n".join(f"* **{md(c)}**: {md(reason)}" for c, reason in options.excluded.items()))
+    left, middle, right = st.columns(3)
+    with left:
+        test_percent = st.slider("Test-set proportion (%)", 10, 50, 20, 5, key=f"test_percent::{dk}")
+    with middle:
+        seed = st.number_input("Random seed", 0, 2**32 - 1, 42, 1, key=f"seed::{dk}")
+    with right:
+        classifier = st.selectbox("Classifier", T.CLASSIFIERS, key=f"classifier::{dk}")
+    st.caption(
+        "Stratified random split: every class must appear in both sets. Choose independent "
+        "examples; this split does not keep groups together or respect time order."
+    )
+    signature = repr((dk, target, tuple(features), test_percent, seed, classifier))
+    if st.session_state.get("training_signature") != signature:
+        st.session_state["training_signature"] = signature
+        st.session_state.pop("training_result", None)
+    if st.button("Train and evaluate", type="primary", key="train_button"):
+        st.session_state.pop("training_result", None)
+        try:
+            with st.spinner("Fitting on training rows and predicting the held-out test set…"):
+                result = T.train_and_evaluate(raw, target, tuple(features), test_percent / 100, int(seed), classifier)
+        except A.DataError as exc:
+            st.error(str(exc))
+            return None
+        st.session_state["training_result"] = result
+        st.session_state["training_run"] = st.session_state.get("training_run", 0) + 1
+    result = st.session_state.get("training_result")
+    if result is None:
+        st.info("Choose settings, then select Train and evaluate to generate held-out predictions.")
+        return None
+    st.success(
+        f"{len(result.train_rows):,} training rows · {len(result.test_rows):,} held-out test rows · "
+        f"{result.classifier} · random seed {result.seed} · stratified split"
+    )
+    if result.missing_targets:
+        st.warning(f"{result.missing_targets:,} rows missing the target were excluded before splitting.")
+    st.info(
+        "Held-out test performance. All metrics, map cells and row details below use only "
+        "the held-out test rows. source_row_id identifies the row in the uploaded CSV "
+        "(1 = first row after the header)."
+    )
+    st.download_button(
+        "Download held-out prediction CSV", result.csv_bytes(), file_name="heldout_predictions.csv",
+        mime="text/csv", on_click="ignore", key="heldout_download",
+    )
+    with st.expander("Held-out predictions"):
+        st.dataframe(result.frame)
+    roles = Roles(result.actual, result.predicted, result.ids, None, False)
+    evaluation = A.evaluate(result.frame, result.actual, result.predicted)
+    result_key = hashlib.sha256(signature.encode()).hexdigest()[:16]
+    return result.frame, roles, evaluation, f"heldout:{result_key}:{st.session_state['training_run']}"
+
+
 # ---------------------------------------------------------------------------
 # 1 · Data
 
@@ -199,6 +299,10 @@ def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str) -> 
     if actual_col == predicted_col:
         st.error("The actual and predicted labels must come from two different columns.")
         return None
+
+    label_warning = A.label_role_warning(raw, actual_col, predicted_col)
+    if label_warning:
+        st.warning(label_warning)
 
     evaluation = A.evaluate(raw, actual_col, predicted_col)
     report_exclusions(evaluation)
@@ -303,9 +407,10 @@ def style_confusion(confusion: pd.DataFrame):
 
 
 def overview_section(
-    raw: pd.DataFrame, evaluation: A.Evaluation, overview: A.Overview, roles: Roles, numeric: tuple[str, ...]
+    raw: pd.DataFrame, evaluation: A.Evaluation, overview: A.Overview, roles: Roles, numeric: tuple[str, ...],
+    heldout: bool = False,
 ) -> None:
-    st.header("2 · Overall performance", divider="gray")
+    st.header("2 · Held-out test performance" if heldout else "2 · Overall performance", divider="gray")
     tiles = st.columns(5)
     tiles[0].metric("Accuracy", f"{overview.accuracy:.1%}", border=True, help="Correct predictions ÷ evaluated rows.")
     tiles[1].metric(
@@ -533,6 +638,8 @@ def failure_map_section(
         st.session_state["selection_signature"] = signature
         st.session_state["sel_x"] = None
         st.session_state["sel_y"] = None
+        # Old chart events must not revive a selection when returning to a map.
+        st.session_state["map_clicks"] = st.session_state.get("map_clicks", 0) + 1
     chart_key = "map::" + hashlib.md5(signature.encode()).hexdigest()[:12]
     apply_map_click(f"{chart_key}::{st.session_state.get('map_clicks', 0)}")
 
@@ -742,41 +849,60 @@ def consistency_footer(
 
 
 def main() -> None:
-    st.set_page_config(page_title="Model Failure Atlas", page_icon="🗺️", layout="wide")
+    st.set_page_config(page_title="AI Error Heatmap", page_icon="🗺️", layout="wide")
+    st.title("Model Failure Atlas")
+    mode = st.radio("Workflow", [ANALYZE_MODE, TRAIN_MODE], horizontal=True, key="workflow")
+    st.caption(
+        "Analyze an existing prediction CSV requires both actual and predicted label columns. "
+        "Train a model and evaluate it requires a target column and feature columns; "
+        "the app generates predictions on a held-out test set."
+    )
+    if st.session_state.get("active_mode") != mode:
+        st.session_state["active_mode"] = mode
+        st.session_state.pop("training_result", None)
+        st.session_state.pop("selection_signature", None)
+        st.session_state["sel_x"] = None
+        st.session_state["sel_y"] = None
+        st.session_state["errors_only"] = False
     with st.sidebar:
-        dataset = choose_dataset()
+        dataset = choose_dataset() if mode == ANALYZE_MODE else training_dataset()
         settings = map_settings()
 
-    st.title("Model Failure Atlas")
     st.markdown(
         "The model has an overall score, but **which kinds of examples does it get wrong?** "
-        "Load a CSV of existing predictions, map its label columns, and choose two numeric "
-        "features. The map colours each group of examples by its error rate; open any "
-        "cell to read the exact rows behind it. Nothing is trained or re-run here."
+        "Choose two numeric features to map groups of examples by their error rate; "
+        "open any cell to read the exact rows behind it."
     )
 
     if dataset is None:
-        st.info("Upload a CSV in the sidebar to begin, or switch back to the sample dataset.")
-        with st.expander("What should the CSV look like?", expanded=True):
-            st.markdown(CSV_HELP)
+        st.info("Upload a CSV in the sidebar to begin.")
+        if mode == ANALYZE_MODE:
+            with st.expander("What should the CSV look like?", expanded=True):
+                st.markdown(CSV_HELP)
+        else:
+            st.caption("Use a header row, a target class column and at least one numeric feature. Try iris.csv with species as the target.")
         return
     data, name, dk = dataset
     try:
         loaded = load(data)
     except A.DataError as exc:
         st.error(f"**{md(name)}** can't be used: {exc}")
-        with st.expander("What should the CSV look like?", expanded=True):
-            st.markdown(CSV_HELP)
         return
     raw = loaded.frame
 
-    prepared = data_section(raw, loaded, name, dk)
-    if prepared is None:
-        return
-    roles, evaluation = prepared
+    if mode == TRAIN_MODE:
+        trained = training_section(loaded, name, dk)
+        if trained is None:
+            return
+        raw, roles, evaluation, dk = trained
+    else:
+        prepared = data_section(raw, loaded, name, dk)
+        if prepared is None:
+            return
+        roles, evaluation = prepared
     overview = A.compute_overview(evaluation.rows)
     options = A.feature_options(raw, evaluation.rows.index, roles.reserved)
-    overview_section(raw, evaluation, overview, roles, options.usable)
+    overview_section(raw, evaluation, overview, roles, options.usable, heldout=mode == TRAIN_MODE)
 
     fmap = failure_map_section(raw, evaluation, roles, options, settings, dk)
     stats = None
