@@ -496,8 +496,7 @@ The footer of the page re-checks, on the live data:
 
 ## Assumptions and decisions
 
-The project follows `Hackathon Planning Doc.md` and
-`Model-Failure-Atlas-Build-Plan.md`. Where they left room:
+Where there was more than one reasonable option:
 
 - **Column mapping** rather than fixed column names, with name-based
   pre-selection so the demo needs no clicks.
@@ -508,12 +507,12 @@ The project follows `Hackathon Planning Doc.md` and
   you can edit it under "Optional columns". Training mode excludes detected IDs.
 - **Confidence** is suggested only for columns named like `confidence`. Names like
   `probability` or `score` are ambiguous (they may be positive-class scores).
-- **Equal-width ranges** (4 × 4 by default), as both documents recommend.
-  Quantiles and custom boundaries are optional.
+- **Equal-width ranges** (4 × 4 by default). Quantiles and custom boundaries
+  are optional.
 - **Per-class map filtering** is available under **Filter map by class**. The
   class-mix table still covers the most important caveat for unfiltered maps.
-- **Selection** uses two range selectors, as the documents recommend. Clicking a
-  cell on the map fills the same selectors, so both paths use the same state.
+- **Selection** uses two range selectors. Clicking a cell on the map fills the
+  same selectors, so both paths use the same state.
 - **Sequential colour scales** (blue by default), light to dark (flipped in dark
   mode), with labels on every cell and a table view, so no reading depends on
   colour alone.
