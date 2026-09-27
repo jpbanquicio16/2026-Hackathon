@@ -6,3 +6,84 @@
 # 0.5 s per 6 MB of CSV, and a parsed file needs over twice its size in memory,
 # so much larger uploads are slow and can exhaust a free Community Cloud app.
 maxUploadSize = 25
+
+# Colour scheme: Café Noir #4C3D19, Kombu Green #354024, Moss Green #889063,
+# Tan #CFBB99 and Bone #E5D7C4. Every text colour below clears 4.5:1 on the
+# surface it sits on; alert text is set explicitly because the derived shades don't.
+[theme]
+font = "Poppins:https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap, sans-serif"
+headingFont = "Playfair Display:https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&display=swap, serif"
+headingFontWeights = 600
+metricValueFontWeight = 600
+baseRadius = "0.75rem"
+buttonRadius = "0.75rem"
+showWidgetBorder = true
+showSidebarBorder = false
+# Earth-toned categorical slots, validated for colour-vision separation on both surfaces.
+chartCategoricalColors = ["#018d87", "#ba882e", "#9a4873", "#8b902d", "#3a75af", "#5d7e28"]
+
+[theme.light]
+backgroundColor = "#f8f4ec"
+secondaryBackgroundColor = "#efe7da"
+textColor = "#2e2616"
+primaryColor = "#354024"
+borderColor = "#dccdb4"
+dataframeHeaderBackgroundColor = "#efe6d6"
+linkColor = "#4a5a2c"
+codeTextColor = "#4c3d19"
+codeBackgroundColor = "#efe6d6"
+grayColor = "#cfbb99"
+blueColor = "#6b7442"
+blueTextColor = "#4a5230"
+greenColor = "#1f7a6f"
+greenTextColor = "#185f57"
+yellowColor = "#ba882e"
+yellowTextColor = "#7a5a1a"
+orangeColor = "#bf623d"
+orangeTextColor = "#9a4b2b"
+redColor = "#a8432f"
+redTextColor = "#8a3524"
+violetColor = "#9a4873"
+violetTextColor = "#7a3a5c"
+
+[theme.light.sidebar]
+backgroundColor = "#354024"
+secondaryBackgroundColor = "#414d2f"
+textColor = "#e5d7c4"
+primaryColor = "#cfbb99"
+borderColor = "#56633f"
+codeTextColor = "#cfbb99"
+codeBackgroundColor = "#2c3620"
+
+[theme.dark]
+backgroundColor = "#1a1710"
+secondaryBackgroundColor = "#28231a"
+textColor = "#ebe2d3"
+primaryColor = "#a9b17e"
+borderColor = "#3d3628"
+dataframeHeaderBackgroundColor = "#242017"
+linkColor = "#b8c08e"
+codeTextColor = "#dccdb4"
+codeBackgroundColor = "#28231a"
+grayColor = "#6c5b39"
+blueColor = "#a3ab76"
+blueTextColor = "#c8cf9f"
+greenColor = "#5fb3a6"
+greenTextColor = "#94d1c6"
+yellowColor = "#d5a94e"
+yellowTextColor = "#e6c27a"
+orangeColor = "#dc8a60"
+orangeTextColor = "#f0ae88"
+redColor = "#d9745f"
+redTextColor = "#f0a08e"
+violetColor = "#c27ba2"
+violetTextColor = "#dca5c4"
+
+[theme.dark.sidebar]
+backgroundColor = "#222a17"
+secondaryBackgroundColor = "#2d3621"
+textColor = "#e5d7c4"
+primaryColor = "#cfbb99"
+borderColor = "#3a452a"
+codeTextColor = "#cfbb99"
+codeBackgroundColor = "#1b2112"

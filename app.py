@@ -1113,11 +1113,93 @@ def reports_section(raw, evaluation, metadata, fmap, selected, result=None):
 
 
 # ---------------------------------------------------------------------------
+# Page style: the theme in .streamlit/config.toml sets colours and fonts; this
+# adds what the theme can't express (cards, the hero, the button gradient).
+
+STYLE_TOKENS = {
+    "light": {
+        "heading": "#4c3d19",
+        "hero": "linear-gradient(120deg, #f2eadd 0%, #e5d7c4 55%, #cfbb99 100%)",
+        "card": "#fffdf9",
+        "card-border": "rgba(207, 187, 153, 0.6)",
+        "shadow": "0 14px 34px -20px rgba(76, 61, 25, 0.45)",
+        "button": "linear-gradient(135deg, #5f6d3d 0%, #354024 100%)",
+        "button-text": "#f8f4ec",
+        "outline": INK,
+    },
+    "dark": {
+        "heading": "#e5d7c4",
+        "hero": "linear-gradient(120deg, #221e15 0%, #2d2719 55%, #3a3120 100%)",
+        "card": "#221e15",
+        "card-border": "rgba(207, 187, 153, 0.16)",
+        "shadow": "0 14px 34px -20px rgba(0, 0, 0, 0.8)",
+        "button": "linear-gradient(135deg, #b5bc8b 0%, #889063 100%)",
+        "button-text": "#1a1710",
+        "outline": WHITE,
+    },
+}
+
+STYLE = """
+.st-key-hero { background: var(--atlas-hero); border-radius: 1.5rem; padding: 2.5rem 2.75rem; }
+.st-key-hero h1 { font-size: 3.4rem; line-height: 1.05; letter-spacing: -0.01em; padding-top: 0; }
+.st-key-hero p { font-size: 1.08rem; max-width: 36rem; }
+[data-testid="stMain"] h1, [data-testid="stMain"] h2, [data-testid="stMain"] h3 { color: var(--atlas-heading); }
+[data-testid="stMetric"], [data-testid="stExpander"] details {
+    background: var(--atlas-card); border-color: var(--atlas-card-border); border-radius: 1rem;
+}
+[data-testid="stMetric"] { box-shadow: var(--atlas-shadow); }
+[data-testid="stBaseButton-primary"] {
+    background: var(--atlas-button); border: none; color: var(--atlas-button-text); box-shadow: var(--atlas-shadow);
+    padding: 0.6rem 1.6rem; font-weight: 500;
+}
+[data-testid="stBaseButton-primary"]:hover { filter: brightness(1.08); color: var(--atlas-button-text); }
+.atlas-hero-art {
+    background: var(--atlas-card); border-radius: 1.25rem; box-shadow: var(--atlas-shadow);
+    padding: 1.1rem; width: min(100%, 15rem); margin-left: auto;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem;
+}
+.atlas-hero-art span { aspect-ratio: 1; border-radius: 0.45rem; }
+.atlas-hero-art .selected { outline: 2.5px solid var(--atlas-outline); outline-offset: 2px; }
+"""
+
+TAGLINE = (
+    "The model has an overall score, but **which kinds of examples does it get wrong?** "
+    "Choose two numeric features to map groups by error rate or error magnitude; "
+    "open any cell to read the exact rows behind it."
+)
+HERO_CELLS = ((12, 5, 4, 3), (9, 4, 2, 2), (7, 2, 1, 1), (3, 1, 2, 0))  # ramp steps of the decorative mini map
+
+
+def apply_style(dark: bool) -> None:
+    tokens = "".join(f"--atlas-{name}: {value};" for name, value in STYLE_TOKENS["dark" if dark else "light"].items())
+    st.html(f"<style>:root {{{tokens}}}{STYLE}</style>")
+
+
+def hero(dark: bool) -> None:
+    ramp = CAFE_RAMP[::-1] if dark else CAFE_RAMP
+    # st.html strips SVG, so the mini map is a grid of styled spans.
+    tiles = []
+    for row, steps in enumerate(HERO_CELLS):
+        for col, step in enumerate(steps):
+            selected = ' class="selected"' if (row, col) == (0, 0) else ""
+            tiles.append(f'<span{selected} style="background: {ramp[step]}"></span>')
+    with st.container(key="hero"):
+        text, picture = st.columns([3, 2], vertical_alignment="center")
+        with text:
+            st.title("Model Failure Atlas")
+            st.markdown(TAGLINE)
+        with picture:
+            st.html(f'<div class="atlas-hero-art" aria-hidden="true">{"".join(tiles)}</div>')
+
+
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
     st.set_page_config(page_title="Model Failure Atlas", page_icon="🗺️", layout="wide")
-    st.title("Model Failure Atlas")
+    dark = theme_is_dark()
+    apply_style(dark)
+    hero(dark)
     mode = st.radio("Workflow", [ANALYZE_MODE, TRAIN_MODE], horizontal=True, key="workflow")
     task = st.radio("Prediction task", ["Classification", "Regression"], horizontal=True, key="prediction_task").lower()
     st.caption(
@@ -1135,12 +1217,6 @@ def main() -> None:
     with st.sidebar:
         dataset = choose_dataset() if mode == ANALYZE_MODE else training_dataset()
         settings = map_settings()
-
-    st.markdown(
-        "The model has an overall score, but **which kinds of examples does it get wrong?** "
-        "Choose two numeric features to map groups by error rate or error magnitude; "
-        "open any cell to read the exact rows behind it."
-    )
 
     if dataset is None:
         st.info("Upload a CSV in the sidebar to begin.")
