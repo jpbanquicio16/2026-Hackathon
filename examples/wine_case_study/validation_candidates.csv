@@ -1,0 +1,3 @@
+model,task,seed,train rows,test rows,split,features,imbalance,CV metric,CV mean,CV std
+Random forest,classification,42,3168,793,75a3b8b1f3c6,"fixed acidity, volatile acidity, citric acid, residual sugar, chlorides, free sulfur dioxide, total sulfur dioxide, density, pH, sulphates, alcohol",None,balanced accuracy,0.6851670794131334,0.00932534428054912
+Logistic regression,classification,42,3168,793,75a3b8b1f3c6,"fixed acidity, volatile acidity, citric acid, residual sugar, chlorides, free sulfur dioxide, total sulfur dioxide, density, pH, sulphates, alcohol",None,balanced accuracy,0.6299599270739293,0.030158702763780718

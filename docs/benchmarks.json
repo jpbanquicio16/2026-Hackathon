@@ -1,0 +1,188 @@
+{
+  "measured_at_utc": "2026-09-27T05:52:29.770206+00:00",
+  "platform": "macOS-14.6-arm64-arm-64bit",
+  "machine": "arm64",
+  "python": "3.12.13",
+  "versions": {
+    "streamlit": "1.58.0",
+    "pandas": "3.0.3",
+    "numpy": "1.26.4",
+    "scikit-learn": "1.9.0",
+    "altair": "6.0.0",
+    "scipy": "1.17.1"
+  },
+  "repeats": 3,
+  "targets_seconds": {
+    "load_csv": 3.0,
+    "fit_logistic": 20.0,
+    "map_and_chart": 2.0,
+    "server_rerun": 5.0
+  },
+  "results": [
+    {
+      "rows": 1000,
+      "csv_bytes": 135857,
+      "measurements": {
+        "load_csv": {
+          "median_seconds": 0.0019382500322535634,
+          "max_seconds": 0.004715125018265098,
+          "samples_seconds": [
+            0.004715125018265098,
+            0.0019382500322535634,
+            0.0017284159548580647
+          ]
+        },
+        "fit_logistic": {
+          "median_seconds": 0.02587829204276204,
+          "max_seconds": 0.055890166957397014,
+          "samples_seconds": [
+            0.055890166957397014,
+            0.02587829204276204,
+            0.025735750037711114
+          ]
+        },
+        "map_and_chart": {
+          "median_seconds": 0.042770583007950336,
+          "max_seconds": 0.04918691603234038,
+          "samples_seconds": [
+            0.04918691603234038,
+            0.042770583007950336,
+            0.04244904202641919
+          ]
+        },
+        "initial_upload_server_render": {
+          "median_seconds": 0.11996624997118488,
+          "max_seconds": 0.11996624997118488,
+          "samples_seconds": [
+            0.11996624997118488
+          ]
+        },
+        "server_rerun": {
+          "median_seconds": 0.10069695796119049,
+          "max_seconds": 0.1270639169961214,
+          "samples_seconds": [
+            0.1270639169961214,
+            0.10069695796119049,
+            0.10064825002336875
+          ]
+        }
+      },
+      "within_targets": {
+        "load_csv": true,
+        "fit_logistic": true,
+        "map_and_chart": true,
+        "server_rerun": true
+      }
+    },
+    {
+      "rows": 10000,
+      "csv_bytes": 1358309,
+      "measurements": {
+        "load_csv": {
+          "median_seconds": 0.01584391697542742,
+          "max_seconds": 0.016835207992698997,
+          "samples_seconds": [
+            0.01553304196568206,
+            0.01584391697542742,
+            0.016835207992698997
+          ]
+        },
+        "fit_logistic": {
+          "median_seconds": 0.14446300000417978,
+          "max_seconds": 0.15273779100971296,
+          "samples_seconds": [
+            0.12256916699698195,
+            0.15273779100971296,
+            0.14446300000417978
+          ]
+        },
+        "map_and_chart": {
+          "median_seconds": 0.07767245802097023,
+          "max_seconds": 0.08730854099849239,
+          "samples_seconds": [
+            0.07767245802097023,
+            0.08730854099849239,
+            0.07010791701031849
+          ]
+        },
+        "initial_upload_server_render": {
+          "median_seconds": 0.2931072089704685,
+          "max_seconds": 0.2931072089704685,
+          "samples_seconds": [
+            0.2931072089704685
+          ]
+        },
+        "server_rerun": {
+          "median_seconds": 0.16524200001731515,
+          "max_seconds": 0.16884283401304856,
+          "samples_seconds": [
+            0.16884283401304856,
+            0.16524200001731515,
+            0.16414183302549645
+          ]
+        }
+      },
+      "within_targets": {
+        "load_csv": true,
+        "fit_logistic": true,
+        "map_and_chart": true,
+        "server_rerun": true
+      }
+    },
+    {
+      "rows": 50000,
+      "csv_bytes": 6790004,
+      "measurements": {
+        "load_csv": {
+          "median_seconds": 0.08172058302443475,
+          "max_seconds": 0.08762350003235042,
+          "samples_seconds": [
+            0.08762350003235042,
+            0.08172058302443475,
+            0.08103383402340114
+          ]
+        },
+        "fit_logistic": {
+          "median_seconds": 0.6165881670312956,
+          "max_seconds": 0.6493274160311557,
+          "samples_seconds": [
+            0.5813077079947107,
+            0.6493274160311557,
+            0.6165881670312956
+          ]
+        },
+        "map_and_chart": {
+          "median_seconds": 0.07340766699053347,
+          "max_seconds": 0.07580783299636096,
+          "samples_seconds": [
+            0.07580783299636096,
+            0.07340766699053347,
+            0.07284387497929856
+          ]
+        },
+        "initial_upload_server_render": {
+          "median_seconds": 0.7100550830364227,
+          "max_seconds": 0.7100550830364227,
+          "samples_seconds": [
+            0.7100550830364227
+          ]
+        },
+        "server_rerun": {
+          "median_seconds": 0.3959852500120178,
+          "max_seconds": 0.39672891597729176,
+          "samples_seconds": [
+            0.39672891597729176,
+            0.39577708300203085,
+            0.3959852500120178
+          ]
+        }
+      },
+      "within_targets": {
+        "load_csv": true,
+        "fit_logistic": true,
+        "map_and_chart": true,
+        "server_rerun": true
+      }
+    }
+  ]
+}

@@ -1,5 +1,1 @@
-streamlit>=1.58,<2
-pandas>=2.2,<4
-numpy>=1.26,<3
-altair>=5.4,<7
-scikit-learn>=1.5,<2
+-r requirements-lock.txt

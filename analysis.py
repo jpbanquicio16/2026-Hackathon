@@ -758,6 +758,9 @@ def build_failure_map(
         cells["mae"] = grouped["absolute_error"].mean().reindex(grid).to_numpy()
         cells["mean_residual"] = grouped["residual"].mean().reindex(grid).to_numpy()
 
+    from uncertainty import add_cell_uncertainty
+
+    cells = add_cell_uncertainty(cells)
     return FailureMap(
         x_col=x_col,
         y_col=y_col,

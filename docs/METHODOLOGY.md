@@ -67,6 +67,16 @@ see the [user guide](USER_GUIDE.md).
     shown as 0%.
   - Cells with fewer examples than the **small-sample threshold** (default 10,
     adjustable) are marked "small", not hidden.
+  - Every populated cell has a **95% Wilson score interval** for its error rate.
+    Empty cells have no interval. For regression this describes the above-tolerance
+    fraction, not the mean absolute error. Interval width reflects sampling uncertainty.
+  - **Elevated error evidence** requires the minimum sample count and a one-sided
+    Fisher exact cell-versus-rest p-value below .05 after Holm correction across all
+    populated cells in this map. A missing complement has no test. This assumes
+    independent examples; repeated groups invalidate that assumption. Changing axes,
+    filters or thresholds creates further comparisons not covered by this correction.
+    Wilson intervals are marginal intervals, not simultaneous bounds across the map.
+    These are exploratory diagnostics, not causal findings or a guarantee about future rows.
 
 ### Inspecting a cell
 
@@ -130,7 +140,7 @@ training mode, or from confirmed uploaded columns (see
 
 ### Experiment history and comparison
 
-Each fitted model is added to **Session experiment history** (the latest 10 runs in
+Each locked and evaluated model is added to **Session experiment history** (the latest 10 runs in
 this browser session). Each row shows: run, UTC timestamp, task, model, target, test
 proportion, split method, group or time column, seed, CV method and folds, whether
 it was tuned, imbalance strategy, primary metric, CV score, held-out score, row
@@ -204,9 +214,9 @@ Binning, split and validation choices are explained under
 
 ## Limitations
 
-- **No categorical encoding.** Training features must be numeric; text, categorical
-  and date columns are listed as excluded rather than one-hot or ordinal encoded.
-  Map axes are numeric too.
+- **Limited categorical encoding.** Repeated text categories with at most 50 values
+  are offered for training. Fold-local imputation and one-hot encoding handle missing
+  and unseen values. Dates/free text require explicit feature engineering. Axes remain numeric.
 - Every row is weighted equally in the overall metrics. Skewed features can leave
   most equal-width ranges nearly empty; use quantile ranges for those.
 - Leakage detection is heuristic. It catches copies, encodings, deterministic
@@ -221,14 +231,15 @@ Binning, split and validation choices are explained under
   logistic regression is not offered for grouped or time-ordered splits.
 - Exact row explanations cover uncalibrated linear models and single decision trees
   only; other models get global importance.
-- Experiment history lives in the browser session (latest 10 runs) and is lost when
-  the session ends; download it to keep it. Choosing between models by repeatedly
-  looking at the same test results makes that test set less useful as an independent
-  check. Prefer the cross-validation scores for selection.
+- Experiment history lives in the browser session (latest 10 revealed runs); download
+  complete run archives for later replay. Candidates are ranked by training CV and
+  only one locked candidate is evaluated. Repeat reveals on this dataset/target are
+  marked exploratory, but reveals outside the current session cannot be tracked.
 - Target-type guidance uses value counts and ratios. It can misjudge unusual targets,
   so the app lets you confirm that values are classes.
 - One cell can be selected at a time, and ranges are recalculated from scratch for
-  each choice of axes. There is no saved state between sessions.
+  each choice of axes. Downloaded reports preserve the view; replay starts from the
+  original model predictions so threshold experiments are never confused with fitting.
 - Labels are compared exactly after trimming. Near-duplicates are reported, not
   fixed.
 - A row with more fields than the header makes the whole file unreadable (with a

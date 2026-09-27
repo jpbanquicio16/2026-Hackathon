@@ -9,6 +9,7 @@ import streamlit as st
 
 import analysis
 import diagnostics
+import experiments
 import exports
 import training
 
@@ -110,11 +111,15 @@ def training_controls(loaded, name, dk, task, fp=None):
     }[split_method])
     options = training.feature_choices(raw, target, split_column)
     features = st.multiselect("Training features", options.usable, default=list(options.usable), key=f"training_features::{dk}::{target}::{split_column}")
+    categorical = st.multiselect("Treat these features as categories", features,
+                                 default=[c for c in features if c in options.categorical],
+                                 key=f"categorical::{dk}::{target}::{split_column}",
+                                 help="Text features must be categorical. Select numeric codes here if their values represent categories rather than amounts.")
     st.caption(
-        "Numeric features only (at least 90% finite numbers among non-missing values). "
-        "The target, detected IDs, split column and constant columns are excluded. Text, categorical "
-        "and date strings are not encoded. Invalid or missing feature values use training-only median "
-        "imputation; scaling is also fitted inside each training/validation split. Exported values stay original."
+        "Numeric features use median imputation and scaling. Categories use the most frequent training value for missing entries, "
+        "then one-hot encoding; unseen test categories produce all-zero indicators. All preprocessing is fitted inside each training/validation fold. "
+        "The target, detected IDs, split column, constants, date strings and free text/high-cardinality columns are excluded. "
+        "Categorical columns are limited to 50 encoded levels. Map axes remain numeric; exported values stay original."
     )
     with st.expander("Columns excluded from training features"):
         st.dataframe(pd.DataFrame(options.excluded.items(), columns=["column", "reason"]), hide_index=True)
@@ -155,23 +160,28 @@ def training_controls(loaded, name, dk, task, fp=None):
         extra = st.multiselect("Also compare these models", compatible, key=f"compare::{dk}::{task}::{model}::{imbalance}")
         if imbalance == "Class weights" and len(compatible) < len(models) - 1:
             st.caption("Models without class-weight support are not offered for comparison under this strategy.")
-        st.caption("Compared models use identical train/test rows. Prefer validation scores for model selection; repeatedly choosing a model from test results makes those results exploratory.")
+        st.caption("Compared models use identical folds and train/test rows. Only cross-validation scores are shown until you lock one model and reveal its test result. CV scores used for tuning are selection estimates, not an independent final score.")
 
     settings = dict(test_size=test_percent / 100, seed=int(seed), task=task, split_method=split_method,
                     split_column=split_column, cv_folds=folds, cv_repeats=repeats, tune=tune, imbalance=imbalance,
-                    dataset_fingerprint=fp)
+                    dataset_fingerprint=fp, categorical_features=tuple(categorical), evaluate_test=False)
     selected_models = [model, *extra]
     signature = hashlib.sha256(json.dumps([fp, target, features, selected_models, settings], sort_keys=True).encode()).hexdigest()
     if st.session_state.get("training_signature") != signature:
         st.session_state["training_signature"] = signature
         st.session_state.pop("training_result", None)
         st.session_state.pop("training_batch", None)
-    if st.button("Train and evaluate", type="primary", key="train_button"):
+        st.session_state.pop("locked_training_result", None)
+    if st.button("Fit and compare on training data", type="primary", key="train_button"):
         st.session_state.pop("training_result", None)
         st.session_state.pop("training_batch", None)
+        st.session_state.pop("locked_training_result", None)
         st.session_state[f"history_view::{dk}"] = None
         if split_method != "Random" and split_column is None:
             st.error("Choose the group or time column before training.")
+            return None
+        if len(selected_models) > 1 and not cv_enabled:
+            st.error("Enable cross-validation to compare models without using test results.")
             return None
         cache = st.session_state.setdefault("training_cache", {})
         try:
@@ -194,16 +204,34 @@ def training_controls(loaded, name, dk, task, fp=None):
                 while len(cache) > 3:
                     cache.pop(next(iter(cache)))
             st.session_state["training_batch"] = results
-            history = st.session_state.setdefault("experiment_history", {})
-            for result in results:
-                run_key = hashlib.sha256((signature + result.classifier).encode()).hexdigest()[:16]
-                result.metadata["run_id"] = run_key
-                history[run_key] = result
-            while len(history) > 10:
-                history.pop(next(iter(history)))
         except analysis.DataError as exc:
             st.error(str(exc))
             return None
+
+    batch = st.session_state.get("training_batch", [])
+    if batch:
+        st.subheader("Model selection on training-fold validation")
+        ranking = training.validation_ranking(batch)
+        st.dataframe(ranking, hide_index=True)
+        locked = st.session_state.get("locked_training_result")
+        selection = st.selectbox("Model to lock for test evaluation", ranking["model"].tolist(),
+                                 key=f"lock_model::{signature}", disabled=locked is not None)
+        if not cv_enabled:
+            st.warning("Cross-validation is disabled. This is a preselected model; there is no validation evidence for choosing it.")
+        st.caption("The top model is selected by CV balanced accuracy (higher is better) or CV MAE (lower is better). Ties keep your configured model order. Locking evaluates only the selected model; other candidates keep their test results hidden.")
+        if locked is None and st.button("Lock model and reveal held-out test performance", key="reveal_test", type="primary"):
+            chosen = next(r for r in batch if r.classifier == selection)
+            result = training.reveal_test(chosen, raw)
+            prior = register_test_exposure(result)
+            result.metadata["selection"] = {"method": "training-fold CV" if cv_enabled else "preselected without CV",
+                                            "candidates": ranking.to_dict(orient="records"),
+                                            "previous_test_reveals_for_dataset_target": prior,
+                                            "exploratory_test_reuse": prior > 0}
+            result.metadata["leakage_review"] = [{"feature": f.feature, "risk": f.risk, "reasons": list(f.reasons)} for f in selected_leakage if f.feature in result.features]
+            result.metadata["run_id"] = hashlib.sha256((signature + result.classifier).encode()).hexdigest()[:16]
+            st.session_state["locked_training_result"] = result
+            save_history(result)
+            st.rerun()
 
     history = st.session_state.get("experiment_history", {})
     saved_choice = None
@@ -227,26 +255,64 @@ def training_controls(loaded, name, dk, task, fp=None):
                 else:
                     st.warning("These runs use different test sets or targets. Their scores are not a controlled model comparison, so no side-by-side table is shown; compare their split details in the history above.")
             saved_choice = st.selectbox("View a saved run", keys, index=None, key=f"history_view::{dk}")
-    batch = st.session_state.get("training_batch", [])
     if saved_choice:
         result = history[saved_choice]
         st.info(f"Viewing saved run {saved_choice} from {result.metadata.get('source_file', 'uploaded data')}. Its task, features and split are recorded below; controls above configure the next run.")
-    elif batch:
-        if len(batch) > 1:
-            st.subheader("Model comparison on the same held-out test set")
-            st.dataframe(training.comparison_table(batch), hide_index=True)
-            selection = st.selectbox("Model to inspect", [r.classifier for r in batch], key=f"inspect_model::{signature}")
-            result = next(r for r in batch if r.classifier == selection)
-        else:
-            result = batch[0]
+    elif batch and st.session_state.get("locked_training_result") is not None:
+        result = st.session_state["locked_training_result"]
     else:
-        st.info("Choose settings, then select Train and evaluate to generate held-out predictions.")
+        st.info("Fit candidates using training data, then lock a model to reveal held-out predictions.")
         return None
-    if not saved_choice:
-        result.metadata["leakage_review"] = [
-            {"feature": f.feature, "risk": f.risk, "reasons": list(f.reasons)}
-            for f in selected_leakage if f.feature in result.features
-        ]
+    return show_result(result)
+
+
+def save_history(result):
+    history = st.session_state.setdefault("experiment_history", {})
+    history[result.metadata["run_id"]] = result
+    while len(history) > 10:
+        history.pop(next(iter(history)))
+
+
+def register_test_exposure(result):
+    """Replaying a saved test result also informs later model choices in this session."""
+    exposures = st.session_state.setdefault("test_exposures", {})
+    metadata = result.metadata
+    key = f"{metadata['dataset_sha256']}:{metadata['target']}:{result.task}"
+    recorded = metadata.get("selection", {}).get("previous_test_reveals_for_dataset_target", 0)
+    prior = max(exposures.get(key, 0), recorded)
+    exposures[key] = prior + 1
+    return prior
+
+
+def restore_controls(data):
+    digest = hashlib.sha256(data).hexdigest()
+    try:
+        manifest, raw, files = experiments.read_archive(data)
+        st.header("Reproduce a saved experiment")
+        st.caption("This archive contains source data, settings and saved outputs. Reproduction refits the model and verifies the split and predictions; no model code is loaded from the archive.")
+        st.json(manifest["recipe"], expanded=True)
+        allow = st.checkbox("Allow changed code or package versions (exploratory replay)", key=f"replay_allow::{digest}")
+        if st.button("Reproduce saved run", type="primary", key="reproduce_run"):
+            with st.spinner("Refitting the saved configuration and comparing predictions…"):
+                result = experiments.reproduce(data, allow_environment_change=allow)
+            register_test_exposure(result)
+            st.session_state["restored_result"] = (digest, result)
+            save_history(result)
+        saved = st.session_state.get("restored_result")
+        if saved and saved[0] == digest:
+            result = saved[1]
+            check = result.metadata["reproduction"]
+            if check["exact_predictions"]:
+                st.success("Reproduction verified: split row IDs and prediction CSV match the saved run exactly.")
+            else:
+                st.warning("Exploratory replay: split IDs match, but predictions differ from the saved run.")
+            return show_result(result)
+    except analysis.DataError as exc:
+        st.error(str(exc))
+    return None
+
+
+def show_result(result):
     st.session_state["training_result"] = result
     run_id = result.metadata["run_id"]
     st.success(f"{len(result.train_rows):,} training rows · {len(result.test_rows):,} held-out test rows · {result.classifier} · random seed {result.seed} · {result.metadata['split_method'].lower()} split")
@@ -267,6 +333,8 @@ def training_controls(loaded, name, dk, task, fp=None):
         st.caption("Measured on the fitting rows. This is not a generalization estimate.")
         st.dataframe(pd.DataFrame([result.training_metrics]), hide_index=True)
     st.info("Held-out test performance. All metrics, map cells and row details below use only the held-out test rows. source_row_id points to the original input data row (1 = first row after the header).")
+    if result.metadata.get("selection", {}).get("exploratory_test_reuse"):
+        st.warning("Exploratory test reuse: test results for this dataset and target were already revealed in this session. Further model choices are influenced by those results; use a new independent dataset for confirmation. This record survives in downloaded metadata; this app cannot track reveals in other sessions.")
     st.download_button("Download held-out prediction CSV", result.csv_bytes(), file_name="heldout_predictions.csv", mime="text/csv", on_click="ignore", key="heldout_download")
     st.download_button("Download training metadata", result.metadata_bytes(), file_name="training_metadata.json", mime="application/json", on_click="ignore")
     with st.expander("Held-out predictions"):

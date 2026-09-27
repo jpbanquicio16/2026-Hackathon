@@ -72,7 +72,13 @@ def open_training(at, content=IRIS, name="iris.csv", task="Classification"):
 
 def train(at):
     at.button(key="train_button").click()
-    return run(at)
+    run(at)
+    buttons = [b for b in at.button if b.key == "reveal_test"]
+    if buttons:
+        assert not at.metric
+        buttons[0].click()
+        run(at)
+    return at
 
 
 def test_regression_screen_shows_regression_metrics_only(app):
@@ -100,27 +106,27 @@ def test_model_comparison_uses_identical_rows_and_blocks_uncontrolled_comparison
     multiselect(app, "Also compare these models").set_value(["Random forest"])
     run(app)
     train(app)
-    assert any(s.value == "Model comparison on the same held-out test set" for s in app.subheader)
+    assert any(s.value == "Model selection on training-fold validation" for s in app.subheader)
     batch = app.session_state["training_batch"]
     assert [r.classifier for r in batch] == ["Logistic regression", "Random forest"]
     assert batch[0].metadata["split_id"] == batch[1].metadata["split_id"]
     assert batch[0].test_rows == batch[1].test_rows and batch[0].train_rows == batch[1].train_rows
     table = next(d.value for d in app.dataframe if "CV mean" in d.value.columns)
     assert table["split"].nunique() == 1 and table["test rows"].tolist() == [30, 30]
-    selectbox(app, "Model to inspect").set_value("Random forest")
-    run(app)
-    assert any("Random forest" in s.value for s in app.success)
+    assert not batch[0].metrics and not batch[1].metrics
+    assert selectbox(app, "Model to lock for test evaluation").disabled
+    assert not any(c.startswith("test ") and c != "test rows" for c in table.columns)
 
     next(n for n in app.number_input if n.label == "Random seed").set_value(7)
     run(app)
     train(app)
     history = list(app.session_state["experiment_history"])
-    assert len(history) == 4  # both models again, now with seed 7
+    assert len(history) == 2  # only the locked model from each fit is evaluated
     compare = multiselect(app, "Compare saved runs")
-    compare.set_value(history[:2])
+    compare.set_value(history[:1])
     run(app)
     assert not any("not a controlled model comparison" in w.value for w in app.warning)
-    multiselect(app, "Compare saved runs").set_value([history[0], history[2]])
+    multiselect(app, "Compare saved runs").set_value(history)
     run(app)
     assert any("These runs use different test sets or targets" in w.value for w in app.warning)
 
@@ -277,7 +283,7 @@ def test_dataset_is_fingerprinted_once_per_upload(app, monkeypatch):
     next(n for n in app.number_input if n.label == "Random seed").set_value(3)
     run(app)
     train(app)
-    assert calls == [150]
+    assert calls == [150, 150, 150]  # cached upload identity plus verification at each test reveal
     assert len({r.metadata["dataset_sha256"] for r in app.session_state["experiment_history"].values()}) == 1
 
 

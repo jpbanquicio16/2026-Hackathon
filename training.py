@@ -8,7 +8,7 @@ import math
 import platform
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 import numpy as np
@@ -23,7 +23,6 @@ from sklearn.ensemble import (
     RandomForestRegressor,
 )
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.impute import SimpleImputer
 from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import get_scorer
@@ -42,13 +41,13 @@ from sklearn.model_selection import (
 )
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.utils.metaestimators import available_if
 
 import analysis
 import diagnostics
+import preprocessing
 from evaluation import classification_metrics, regression_evaluation, regression_metrics
 
 CLASSIFIERS = (
@@ -130,12 +129,13 @@ class TrainingResult:
     y_train: pd.Series = field(default_factory=lambda: pd.Series(dtype=object))
     y_test: pd.Series = field(default_factory=lambda: pd.Series(dtype=object))
     notes: tuple[str, ...] = ()
+    source: pd.DataFrame = field(default_factory=pd.DataFrame, repr=False)
 
     def csv_bytes(self) -> bytes:
         return self.frame.to_csv(index=False).encode("utf-8")
 
     def metadata_bytes(self) -> bytes:
-        return json.dumps(self.metadata, indent=2, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        return (json.dumps(self.metadata, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
 
 
 def fingerprint(raw: pd.DataFrame) -> str:
@@ -162,15 +162,11 @@ def _strategy(balance, imbalance) -> str:
     return imbalance
 
 
-def feature_choices(raw: pd.DataFrame, target: str, split_column: str | None = None) -> analysis.FeatureOptions:
-    ids = analysis.suggest_id_columns(raw, exclude=(target,))
-    reserved = {target: "target", **{column: "identifier" for column in ids}}
-    if split_column:
-        reserved[split_column] = "split column"
-    return analysis.feature_options(raw, raw.index, reserved)
+def feature_choices(raw: pd.DataFrame, target: str, split_column: str | None = None):
+    return preprocessing.feature_choices(raw, target, split_column)
 
 
-def _estimator(name: str, task: str, seed: int, balance: bool | str, probabilities: bool = True):
+def _estimator(name: str, task: str, seed: int, balance: bool | str, probabilities: bool = True, features=(), categorical=()):
     """`balance` is an imbalance strategy name (True/False kept for older callers).
     `probabilities=False` fits an SVM without calibration."""
     strategy = _strategy(balance, None)
@@ -202,11 +198,7 @@ def _estimator(name: str, task: str, seed: int, balance: bool | str, probabiliti
     oversample = strategy == "Oversampling" and task == "classification"
     if oversample:
         estimator = ResampledClassifier(estimator, random_state=seed)
-    pipeline = Pipeline([
-        ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-        ("scaler", StandardScaler()),
-        ("classifier", estimator),
-    ])
+    pipeline = Pipeline([*preprocessing.steps(features, categorical), ("classifier", estimator)])
     prefix = "classifier__" + ("estimator__" if oversample else "")
     if task == "classification" and name in CALIBRATED and (probabilities or name != "Support vector machine"):
         # The entire preprocessing pipeline is refitted in each calibration fold, and
@@ -476,6 +468,8 @@ def train_and_evaluate(
     cv_folds: int = 0, cv_repeats: int = 1, tune: bool = False, balance: bool = False,
     imbalance: str | None = None, progress: Callable[[int, int, str], None] | None = None,
     dataset_fingerprint: str | None = None,
+    categorical_features: tuple[str, ...] | None = None,
+    evaluate_test: bool = True,
 ) -> TrainingResult:
     """`imbalance` is one of IMBALANCE_STRATEGIES; `balance=True` means Oversampling.
     `progress(done, total, label)` reports cross-validation fits as they finish."""
@@ -486,11 +480,15 @@ def train_and_evaluate(
         raise analysis.DataError("Choose Classification or Regression.")
     if split_column == target:
         raise analysis.DataError("The target cannot be the split column.")
-    allowed = feature_choices(raw, target, split_column).usable
+    options = feature_choices(raw, target, split_column)
+    allowed = options.usable
     if not features:
-        raise analysis.DataError("Choose at least one numeric training feature.")
+        raise analysis.DataError("Choose at least one training feature.")
     if len(set(features)) != len(features) or any(c not in allowed for c in features):
-        raise analysis.DataError("Training features must be numeric, distinct, and exclude the target and identifiers or split column.")
+        raise analysis.DataError("Training features must be eligible, distinct, and exclude the target and identifiers or split column.")
+    categorical = tuple(c for c in features if c in options.categorical) if categorical_features is None else tuple(categorical_features)
+    if len(set(categorical)) != len(categorical) or not set(categorical) <= set(features) or not (set(options.categorical) & set(features)) <= set(categorical):
+        raise analysis.DataError("Categorical columns must be selected features; text features must be treated as categorical.")
     if not 0 < test_size < 1 or not 0 <= seed <= 2**32 - 1:
         raise analysis.DataError("Use a test proportion between 0 and 1 and a seed between 0 and 4294967295.")
     if strategy not in IMBALANCE_STRATEGIES:
@@ -511,7 +509,7 @@ def train_and_evaluate(
     original_labels = analysis.clean_labels(raw[target]) if task == "classification" else analysis.parse_numeric(raw[target]).values
     missing_targets = int(original_labels.isna().sum())
     labels, train_rows, test_rows, split_values, coverage, split_notes = _split(raw, original_labels.dropna(), test_size, seed, task, split_method, split_column)
-    values = pd.DataFrame({c: analysis.parse_numeric(raw[c]).values for c in features})
+    values = preprocessing.values(raw, features, categorical)
     X_train, y_train = values.loc[train_rows], labels.loc[train_rows]
     empty_train = X_train.columns[X_train.isna().all()].tolist()
     if empty_train:
@@ -553,7 +551,7 @@ def train_and_evaluate(
         )
     if probability_status:
         notes.append(probability_status)
-    estimator, prefix = _estimator(classifier, task, seed, strategy, probabilities=svm_probabilities)
+    estimator, prefix = _estimator(classifier, task, seed, strategy, probabilities=svm_probabilities, features=features, categorical=categorical)
 
     def report(done, total, label):
         if progress:
@@ -601,48 +599,18 @@ def train_and_evaluate(
             notes.extend(dict.fromkeys(str(w.message) for w in recorded if issubclass(w.category, ConvergenceWarning)))
     except ValueError as exc:
         raise analysis.DataError(_fit_error(exc)) from exc
-    report(1, 1, "Predicting held-out rows")
+    report(1, 1, "Predicting held-out rows" if evaluate_test else "Training complete; held-out results are locked")
 
     test_rows = sorted(int(row) for row in test_rows)
     X_test, y_test = values.loc[test_rows], labels.loc[test_rows]
-    predicted = model.predict(X_test)
-    original_ids = analysis.suggest_id_columns(raw, exclude=(target,))
-    if split_column and split_column not in original_ids:
-        original_ids.append(split_column)
-    result = raw.loc[test_rows, [*original_ids, *features]].copy()
-
-    def available_name(base):
-        name, suffix = base, 2
-        while name in result.columns:
-            name = f"{base}_{suffix}"
-            suffix += 1
-        return name
-
-    source_id = available_name("source_row_id")
-    result.insert(0, source_id, test_rows)
-    actual_col, predicted_col = available_name("actual_label"), available_name("predicted_label")
-    result[actual_col] = y_test.to_numpy()
-    result[predicted_col] = predicted
-    probability_columns, confidence = {}, None
-    if task == "classification" and hasattr(model, "predict_proba"):
-        probabilities = model.predict_proba(X_test)
-        for i, label in enumerate(model.classes_):
-            column = available_name(f"probability_{i}")
-            probability_columns[str(label)] = column
-            result[column] = probabilities[:, i]
-        confidence = available_name("predicted_confidence")
-        class_index = {label: i for i, label in enumerate(model.classes_)}
-        result[confidence] = [probabilities[i, class_index[label]] for i, label in enumerate(predicted)]
-    result.index = pd.RangeIndex(1, len(result) + 1, name="row")
-    metrics = _metrics(y_test, predicted, task)
+    result, actual_col, predicted_col, id_columns, probability_columns, confidence, metrics = _test_output(
+        raw, features, split_column, test_rows, X_test, y_test, model, task, evaluate_test,
+    )
     training_metrics = _metrics(y_train, model.predict(X_train), task)
     if task == "classification" and probability_status is None:
-        if probability_columns:
-            probability_status = "available"
-        else:
-            probability_status = f"{classifier} does not provide class probabilities, so ROC-AUC, confidence analysis and threshold exploration are unavailable."
+        probability_status = "available" if hasattr(model, "predict_proba") else f"{classifier} does not provide class probabilities."
     probability_method = None
-    if probability_columns:
+    if task == "classification" and hasattr(model, "predict_proba"):
         probability_method = (
             f"sigmoid (Platt) calibration on {CALIBRATION_FOLDS} stratified folds of the training rows; predictions are the most probable class"
             if classifier in CALIBRATED else "the model's predict_proba"
@@ -650,8 +618,9 @@ def train_and_evaluate(
     dataset_hash = dataset_fingerprint or fingerprint(raw)
     split_identity = {"dataset_sha256": dataset_hash, "task": task, "target": target, "train_rows": sorted(int(v) for v in train_rows), "test_rows": test_rows}
     metadata = {
-        "schema_version": 1, "performance_scope": "Held-out test performance", "task": task,
-        "target": target, "features": list(features), "model": classifier, "seed": seed,
+        "schema_version": 2, "performance_scope": "Held-out test performance" if evaluate_test else "Training-fold validation; test results locked", "task": task,
+        "test_revealed": evaluate_test,
+        "target": target, "features": list(features), "categorical_features": list(categorical), "model": classifier, "seed": seed,
         "requested_test_proportion": test_size, "split_method": split_method, "split_column": split_column,
         "dataset_sha256": dataset_hash, "split_id": hashlib.sha256(json.dumps(split_identity, sort_keys=True).encode()).hexdigest(),
         "train_row_ids": [int(row) for row in train_rows], "test_row_ids": test_rows,
@@ -663,14 +632,14 @@ def train_and_evaluate(
             "Class weights": "class_weight='balanced' inside each training fit",
         }[strategy],
         "split_class_coverage": coverage,
-        "preprocessing": "Training-only median imputation and standard scaling; empty feature in a CV training fold uses 0.",
+        "preprocessing": "Training-fold numeric median imputation and scaling; categorical most-frequent imputation and one-hot encoding (unknown values ignored, at most 50 encoded categories per column). Empty numeric training-fold columns use 0.",
         "tuned": tune, "selected_parameters": _plain(best_params),
         "fitted_parameters": _plain(model.get_params(deep=True)),
         "cv_method": cv_method, "cv_requested_folds": cv_folds, "cv_repeats": cv_repeats, "cv_splits": len(splits),
         "cv_metric": "balanced accuracy" if task == "classification" else "MAE",
         "cv_mean": cv_mean, "cv_std": cv_std,
         "cv_row_ids": [{"train": y_train.index[tr].tolist(), "validation": y_train.index[va].tolist()} for tr, va in splits],
-        "actual_column": actual_col, "predicted_column": predicted_col, "id_columns": [source_id, *original_ids],
+        "actual_column": actual_col, "predicted_column": predicted_col, "id_columns": list(id_columns),
         "probability_columns": probability_columns, "confidence_column": confidence,
         "probability_status": probability_status, "probability_method": probability_method,
         "test_metrics": metrics, "training_metrics": training_metrics, "notes": notes,
@@ -679,11 +648,69 @@ def train_and_evaluate(
         "versions": {"python": platform.python_version(), "numpy": np.__version__, "pandas": pd.__version__, "scikit-learn": sklearn.__version__},
     }
     return TrainingResult(
-        result, actual_col, predicted_col, (source_id, *original_ids), tuple(int(row) for row in train_rows),
+        result, actual_col, predicted_col, id_columns, tuple(int(row) for row in train_rows),
         tuple(test_rows), missing_targets, classifier, seed, model, task, features, metadata,
         cv_results, metrics, training_metrics, probability_columns, confidence,
-        X_train, X_test, y_train, y_test, tuple(notes),
+        X_train, X_test, y_train, y_test, tuple(notes), raw,
     )
+
+
+def _test_output(raw, features, split_column, test_rows, X_test, y_test, model, task, reveal=True):
+    """The only held-out prediction call. Deferred fits never call it on test data."""
+    target = y_test.name
+    original_ids = analysis.suggest_id_columns(raw, exclude=(target,))
+    if split_column and split_column not in original_ids:
+        original_ids.append(split_column)
+    result = raw.loc[test_rows if reveal else [], [*original_ids, *features]].copy()
+
+    def available_name(base):
+        name, suffix = base, 2
+        while name in result.columns:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        return name
+
+    source_id = available_name("source_row_id")
+    result.insert(0, source_id, test_rows if reveal else [])
+    actual_col, predicted_col = available_name("actual_label"), available_name("predicted_label")
+    predicted = model.predict(X_test) if reveal else np.array([])
+    result[actual_col] = y_test.to_numpy() if reveal else np.array([])
+    result[predicted_col] = predicted
+    probability_columns, confidence = {}, None
+    if reveal and task == "classification" and hasattr(model, "predict_proba"):
+        probabilities = model.predict_proba(X_test)
+        for i, label in enumerate(model.classes_):
+            column = available_name(f"probability_{i}")
+            probability_columns[str(label)] = column
+            result[column] = probabilities[:, i]
+        confidence = available_name("predicted_confidence")
+        class_index = {label: i for i, label in enumerate(model.classes_)}
+        result[confidence] = [probabilities[i, class_index[label]] for i, label in enumerate(predicted)]
+    result.index = pd.RangeIndex(1, len(result) + 1, name="row")
+    metrics = _metrics(y_test, predicted, task) if reveal else {}
+    return result, actual_col, predicted_col, (source_id, *original_ids), probability_columns, confidence, metrics
+
+
+def reveal_test(result: TrainingResult, raw: pd.DataFrame) -> TrainingResult:
+    """Lock an already fitted candidate and evaluate it without refitting anything."""
+    if result.metadata.get("test_revealed", True):
+        return result
+    if fingerprint(raw) != result.metadata["dataset_sha256"]:
+        raise analysis.DataError("The source data differs from the fitted candidate. Fit again before revealing test results.")
+    frame, actual, predicted, ids, probs, confidence, metrics = _test_output(
+        raw, result.features, result.metadata["split_column"], list(result.test_rows),
+        result.X_test, result.y_test, result.model, result.task,
+    )
+    metadata = {**result.metadata, "test_revealed": True, "performance_scope": "Held-out test performance",
+                "test_metrics": metrics, "probability_columns": probs, "confidence_column": confidence}
+    return replace(result, frame=frame, actual=actual, predicted=predicted, ids=ids,
+                   probability_columns=probs, confidence=confidence, metrics=metrics, metadata=metadata)
+
+
+def validation_ranking(results):
+    table = comparison_table(results)
+    table = table.drop(columns=[c for c in table if c.startswith("test ") and c != "test rows"])
+    return table.sort_values("CV mean", ascending=results[0].task == "regression", na_position="last", kind="stable").reset_index(drop=True)
 
 
 def compare_models(raw, target, features, models, progress: Callable | None = None, **settings):
@@ -784,12 +811,14 @@ def _fitted_estimator(model):
 def model_importance(result: TrainingResult) -> tuple[str, pd.DataFrame]:
     """Global importance the fitted model exposes itself; empty when it has none."""
     estimator = _fitted_estimator(result.model)
+    pipeline = result.model.calibrated_classifiers_[0].estimator if isinstance(result.model, CalibratedClassifierCV) else result.model
+    names = preprocessing.feature_names(pipeline, result.features)
     if hasattr(estimator, "feature_importances_"):
-        table = pd.DataFrame({"feature": result.features, "importance": estimator.feature_importances_})
+        table = pd.DataFrame({"feature": names, "importance": estimator.feature_importances_})
         note = "Impurity-based importance from the fitted trees on training rows. It favours features with many split points and does not show direction."
     elif hasattr(estimator, "coef_"):
-        table = pd.DataFrame({"feature": result.features, "importance": np.abs(np.atleast_2d(estimator.coef_)).mean(axis=0)})
-        note = "Mean absolute coefficient on standardized features (per class for multiclass). Larger means a larger change in the linear score per standard deviation."
+        table = pd.DataFrame({"feature": names, "importance": np.abs(np.atleast_2d(estimator.coef_)).mean(axis=0)})
+        note = "Mean absolute coefficient (per class for multiclass). Numeric features are standardized; encoded categories are 0/1 indicators. These scales differ, so compare coefficients with care."
     else:
         return f"{result.classifier} exposes no built-in feature importance. Use permutation importance, which works for any model.", pd.DataFrame()
     return note, table.sort_values("importance", ascending=False)
@@ -803,6 +832,7 @@ def row_explanation(result: TrainingResult, row: int) -> tuple[str, pd.DataFrame
         ), pd.DataFrame()
     position = int(row) - 1
     values = result.model[:-1].transform(result.X_test.iloc[[position]])[0]
+    names = preprocessing.feature_names(result.model, result.features)
     estimator = result.model["classifier"]
     if isinstance(estimator, ResampledClassifier):
         estimator = estimator.estimator_
@@ -824,7 +854,7 @@ def row_explanation(result: TrainingResult, row: int) -> tuple[str, pd.DataFrame
         else:
             coefficient, base, kind = coefficient[0], float(intercept[0]), "predicted value"
         contributions = values * coefficient
-        table = pd.DataFrame({"feature": result.features, "transformed value": values, "coefficient": coefficient, "contribution": contributions})
+        table = pd.DataFrame({"feature": names, "transformed value": values, "coefficient": coefficient, "contribution": contributions})
         return f"Training-imputed and scaled values × coefficients, plus intercept {base:.6g}, sum to {kind} {base + contributions.sum():.6g}. These describe the model, not causal effects.", table
     if hasattr(estimator, "tree_"):
         tree = estimator.tree_
@@ -834,7 +864,7 @@ def row_explanation(result: TrainingResult, row: int) -> tuple[str, pd.DataFrame
             feature = tree.feature[node]
             if feature < 0:
                 continue
-            records.append({"feature": result.features[feature], "transformed value": values[feature], "condition": "≤" if values[feature] <= tree.threshold[node] else ">", "threshold": tree.threshold[node]})
+            records.append({"feature": names[feature], "transformed value": values[feature], "condition": "≤" if values[feature] <= tree.threshold[node] else ">", "threshold": tree.threshold[node]})
         return "Decision path using training-imputed, standardized features. Conditions describe this tree's prediction, not causal effects.", pd.DataFrame(records)
     return (
         f"{LOCAL_UNAVAILABLE} {result.classifier} combines many trees, neighbours or kernels, so no exact "

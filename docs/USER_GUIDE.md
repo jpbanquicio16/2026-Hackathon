@@ -43,7 +43,7 @@ Uploaded probabilities are used only after you say what they mean, under
 ### Train a model and evaluate it
 
 1. Select **Train a model and evaluate it**, choose Classification or Regression,
-   then upload a **Labelled CSV**. The file needs a target and at least one numeric
+   then upload a **Labelled CSV**. The file needs a target and at least one usable
    feature. For Iris, upload `iris.csv`, choose `species`, and retain the four
    measurement features. For regression, choose a numeric target such as
    `petal_length`.
@@ -55,9 +55,10 @@ Uploaded probabilities are used only after you say what they mean, under
 4. Under **Validation, balancing and model comparison**, optionally change the folds
    and repeats, turn on hyperparameter search, choose a class-imbalance strategy,
    and pick extra models to compare.
-5. Select **Train and evaluate**. A progress bar reports each validation fit as it
-   finishes. The app reports training and held-out row counts, model, seed and split.
-   All performance metrics and map rows use only the test set.
+5. Select **Fit and compare on training data**. A progress bar reports each validation
+   fit. Compare CV scores, then choose **Lock model and reveal held-out test performance**.
+   Only the selected model generates test predictions. The app reports row counts,
+   model, seed and split; all map rows and test metrics use the held-out set.
 6. Inspect a map cell. Use **Download held-out prediction CSV** to export the
    original selected features, retained identifiers, `source_row_id`, actual labels,
    predictions and, when available, class probabilities (`probability_0`, … in the
@@ -72,9 +73,10 @@ Uploaded probabilities are used only after you say what they mean, under
 | --- | --- |
 | 3-nearest neighbors, Logistic regression, Decision tree (`max_depth=5`), Random forest (100 trees), Support vector machine (RBF), Gradient boosting (histogram), Calibrated logistic regression | Ridge regression, 3-nearest neighbors, Decision tree, Random forest, Support vector machine (RBF), Gradient boosting |
 
-Every model runs inside the same pipeline: training-only median imputation, then
-standard scaling, then the estimator. Stochastic estimators receive the selected
-seed. **Hyperparameter search** (grid search, scored by balanced accuracy for
+Every model uses the same fold-local preprocessing: numeric features receive median
+imputation and standard scaling; categorical features receive most-frequent imputation
+and one-hot encoding. Stochastic estimators receive the selected seed.
+**Hyperparameter search** (grid search, scored by balanced accuracy for
 classification and MAE for regression) needs cross-validation and never sees the
 test rows. Compared models always share identical training and test rows.
 
@@ -119,17 +121,28 @@ table and the experiment history.
 - The target, detected ID columns and the group or time column cannot be training
   features. ID detection uses ID names, leading-zero numeric codes and row-counter
   patterns.
-- **Features must be numeric.** A candidate needs at least 90% finite numbers among
-  its non-missing values and more than one distinct value. Text, categorical and
-  date strings are **not encoded**; excluded columns are listed with the reason.
+- **Numeric and categorical features.** Numeric columns need at least 90% finite
+  numbers among non-missing values. Repeated text categories with at most 50 values
+  are offered; numeric codes can be selected under **Treat these features as categories**.
+  Numeric imputation/scaling and categorical most-frequent imputation/one-hot encoding
+  are fitted inside each fold. Unknown test categories yield all-zero indicators;
+  labels such as `01` and `1` stay distinct. Dates and free text require feature engineering.
 - Target labels use the existing whitespace/missing-value rules. Missing targets
   are counted and removed before splitting; numeric class codes remain text labels.
 - Exported feature values remain as uploaded, so missing map-axis values still
   cause map omissions even though the model can predict after imputation. Those
   rows remain in test accuracy. `source_row_id` is the 1-based data-row position in
   the labelled input; the detail table's `row` is the position in the exported CSV.
-- Changing training settings removes old results until **Train and evaluate** is
-  selected again. Inspecting cells or changing map settings reuses the fitted result.
+- Changing training settings removes old results until candidates are fitted and a
+  model is locked again. Inspecting cells reuses the fitted result. A repeat reveal
+  for the same dataset/target in this session is marked as exploratory test reuse.
+  Restoring a saved result also counts as exposure before any later model choices.
+
+After **Prepare evaluation report**, download the reproducible run archive. It
+contains the full source dataset, recipe, predictions and displayed reports. To
+resume later, choose **Restore a saved run** as the training source. Exact replay
+checks the calculation code, Python major/minor version, ML package versions, split
+row IDs and prediction CSV. Environment changes require an explicit exploratory replay.
 
 With the checked-in Iris data, the default split and 3-nearest neighbors, the split
 is 120 training and 30 test rows (10 per species). There are **28 correct and 2

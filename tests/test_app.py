@@ -273,6 +273,9 @@ def train_iris(at):
     assert selectbox(at, "Target column").value == "species"
     assert "species" not in next(m for m in at.multiselect if m.label == "Training features").options
     at.button(key="train_button").click()
+    run(at)
+    assert not at.metric
+    at.button(key="reveal_test").click()
     return run(at)
 
 
@@ -335,6 +338,8 @@ def test_training_settings_clear_old_results_and_cell_selection(app):
     assert not app.metric
     assert not any(e.label == "Held-out predictions" for e in app.expander)
     app.button(key="train_button").click()
+    run(app)
+    app.button(key="reveal_test").click()
     run(app)
     assert selectbox(app, "sepal_length range").value is None
     assert any("random seed 7" in s.value for s in app.success)

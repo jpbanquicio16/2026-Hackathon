@@ -28,7 +28,7 @@ def json_safe(value):
 
 
 def json_bytes(value) -> bytes:
-    return json.dumps(json_safe(value), indent=2, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return (json.dumps(json_safe(value), indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
 
 
 def map_table(fmap: analysis.FailureMap) -> pd.DataFrame:
@@ -76,6 +76,7 @@ def evaluation_files(raw, evaluation, metadata, fmap=None, selected=None) -> dic
             "y_edges": fmap.y_bins.edges, "mapped_rows": fmap.n_mapped,
             "omitted_rows": fmap.n_omitted, "omission_reasons": fmap.omitted,
             "boundary_rule": "lower-inclusive, upper-exclusive; final bin includes maximum (integer bins use inclusive integer runs)",
+            "uncertainty": "95% Wilson intervals for cell error rates; one-sided Fisher cell-vs-rest tests with Holm correction across this map. Independent examples assumed. Repeated map exploration is not corrected; not a causal or confirmatory claim.",
         }
         tables.append(("Map cells (error_rate is a fraction; empty cells have no rate)", table))
         if selected and selected[0] is not None and selected[1] is not None:
@@ -98,7 +99,7 @@ def evaluation_files(raw, evaluation, metadata, fmap=None, selected=None) -> dic
         "Cross-validation and training scores, if present in metadata, are separate from the performance above.</p>"
         + sections + "<h2>Audit metadata</h2><pre>" + html.escape(json.dumps(meta, indent=2, ensure_ascii=False)) + "</pre></html>"
     )
-    files["evaluation_report.html"] = document.encode()
+    files["evaluation_report.html"] = (document + "\n").encode()
     return files
 
 
