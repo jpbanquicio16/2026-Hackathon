@@ -40,7 +40,7 @@ def test_error_rate_is_the_only_colour_scale_and_is_fixed(fmap):
     assert len(scales) == 1
     (scale,) = scales
     assert scale["domain"][0] == 0 and scale["domain"][-1] == 1
-    assert scale["range"] == app.BLUE_RAMP
+    assert scale["range"] == app.CAFE_RAMP
 
 
 def test_dark_theme_flips_the_ramp(fmap):
@@ -49,7 +49,7 @@ def test_dark_theme_flips_the_ramp(fmap):
         for layer in spec(fmap, dark=True)["layer"]
         if "scale" in layer.get("encoding", {}).get("color", {})
     ]
-    assert scale["range"] == app.BLUE_RAMP[::-1]
+    assert scale["range"] == app.CAFE_RAMP[::-1]
 
 
 def test_empty_cells_are_labelled_not_coloured(fmap):

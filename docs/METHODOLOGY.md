@@ -43,7 +43,7 @@ see the [user guide](USER_GUIDE.md).
   number omitted, and why, is shown above the map.
 - **Ranges.** Each feature is split into equal-width ranges (4 by default,
   adjustable from 2 to 8) spanning the mapped rows' minimum to maximum. The sidebar
-  also offers quantile ranges and custom boundaries, three colour palettes and
+  also offers quantile ranges and custom boundaries, five colour palettes and
   sample-count overlays. **Filter map by class** restricts the map and its rows to
   chosen actual or predicted classes; overall metrics keep every row.
   - Edges are rounded to readable values, and the rounded edges are the ones rows
@@ -194,9 +194,10 @@ Where there was more than one reasonable option:
   class-mix table still covers the most important caveat for unfiltered maps.
 - **Selection** uses two range selectors. Clicking a cell on the map fills the
   same selectors, so both paths use the same state.
-- **Sequential colour scales** (blue by default), light to dark (flipped in dark
-  mode), with labels on every cell and a table view, so no reading depends on
-  colour alone.
+- **Sequential colour scales** (café brown by default, running from the theme's
+  Bone through Tan to Café Noir), light to dark (flipped in dark mode), with labels
+  on every cell and a table view, so no reading depends on colour alone. Cell labels
+  switch between dark and white text wherever white gives the better contrast.
 
 Binning, split and validation choices are explained under
 [Design decisions](../README.md#design-decisions) in the README.

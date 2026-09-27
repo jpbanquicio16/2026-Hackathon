@@ -42,17 +42,32 @@ SAMPLE_PATH = Path(__file__).parent / "sample_predictions.csv"
 ANALYZE_MODE = "Analyze an existing prediction CSV"
 TRAIN_MODE = "Train a model and evaluate it"
 
-# Error rate is a magnitude, so it gets one hue from light to dark: steps
-# 100-700 of a blue ramp, spread evenly over a fixed 0-100% domain. Dark
-# themes flip the anchor so a higher rate is always the more prominent cell.
+# Error rate is a magnitude, so it gets one hue from light to dark, spread
+# evenly over a fixed 0-100% domain. The default ramp runs through the theme's
+# Bone, Tan and Café Noir in even OKLCH lightness steps. Dark themes flip the
+# anchor so a higher rate is always the more prominent cell.
+CAFE_RAMP = [
+    "#e5d7c4", "#dac9ae", "#cfbb99", "#c1ad8b", "#b3a07e", "#a59370", "#988663",
+    "#8b7956", "#7e6c4a", "#71603d", "#645431", "#584825", "#4c3d19",
+]
+MOSS_RAMP = [
+    "#d8dcc7", "#c9ceb5", "#bbc0a3", "#adb391", "#9fa67f", "#91986e", "#838b5f",
+    "#757e55", "#67714b", "#5a6541", "#4d5837", "#414c2d", "#354024",
+]
 BLUE_RAMP = [
     "#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5",
     "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b",
 ]
-INK, WHITE, MUTED = "#0b0b0b", "#ffffff", "#898781"
-EMPTY_FILL = "rgba(137, 135, 129, 0.16)"  # neutral wash that works on light and dark
-DIAGONAL_FILL = "background-color: rgba(137, 135, 129, 0.18); font-weight: 600"
-TEXT_FLIP = 0.58  # from ramp step 450 on, white text contrasts better than ink
+PALETTES = {
+    "Café": CAFE_RAMP,
+    "Moss": MOSS_RAMP,
+    "Blue": BLUE_RAMP,
+    "Purple": ["#eee8f5", "#d2bce7", "#ab8bc9", "#8056ad", "#512882"],
+    "Teal": ["#d9f0ed", "#ace0d8", "#68bcb1", "#28887e", "#07564d"],
+}
+INK, WHITE, MUTED = "#17120a", "#ffffff", "#877b63"
+EMPTY_FILL = "rgba(140, 128, 104, 0.16)"  # neutral wash that works on light and dark
+DIAGONAL_FILL = "background-color: rgba(140, 128, 104, 0.18); font-weight: 600"
 MAX_MATRIX_CLASSES = 30
 
 CSV_HELP = """
@@ -76,7 +91,7 @@ class Settings:
     n_bins: int
     small_n: int
     method: str = "Equal width"
-    palette: str = "Blue"
+    palette: str = "Café"
     show_counts: bool = True
 
 
@@ -127,6 +142,23 @@ def theme_is_dark() -> bool:
         return st.context.theme.type == "dark"
     except Exception:  # no browser context, e.g. in tests
         return False
+
+
+def luminance(colour: str) -> float:
+    """WCAG relative luminance of a #rrggbb colour."""
+    channels = [int(colour[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    r, g, b = (c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def text_flip(ramp: list[str]) -> float:
+    """Position on a ramp from which white labels contrast better than INK."""
+    ink = luminance(INK)
+    for step, colour in enumerate(ramp):
+        fill = luminance(colour)
+        if 1.05 / (fill + 0.05) >= (fill + 0.05) / (ink + 0.05):
+            return step / (len(ramp) - 1)
+    return 1.0
 
 
 # The cache is shared by every visitor to a deployed app, so keep it small.
@@ -194,7 +226,7 @@ def map_settings() -> Settings:
         "because their error rates are unreliable.",
     )
     method = st.selectbox("Binning method", ["Equal width", "Quantiles", "Custom boundaries"], key="bin_method")
-    palette = st.selectbox("Colour palette", ["Blue", "Purple", "Teal"], key="palette")
+    palette = st.selectbox("Colour palette", list(PALETTES), key="palette")
     counts = st.checkbox("Show sample-count overlays", value=True, key="show_counts")
     return Settings(int(n_bins), int(small_n), method, palette, counts)
 
@@ -637,7 +669,7 @@ def pick_axis(label: str, options: tuple[str, ...], key: str, avoid: str | None)
 
 
 def heatmap(fmap: analysis.FailureMap, small_n: int, selected: tuple[int | None, int | None], dark: bool,
-            metric: str = "error_rate", palette: str = "Blue", show_counts: bool = True) -> alt.LayerChart:
+            metric: str = "error_rate", palette: str = "Café", show_counts: bool = True) -> alt.LayerChart:
     cells = fmap.cells.copy()
     cells["x_range"] = [fmap.x_bins.labels[i] for i in cells["x_bin"]]
     cells["y_range"] = [fmap.y_bins.labels[i] for i in cells["y_bin"]]
@@ -655,11 +687,11 @@ def heatmap(fmap: analysis.FailureMap, small_n: int, selected: tuple[int | None,
     cells["tip_rate"] = [(f"{r:.1%}" if metric == "error_rate" else f"{r:.4g}") if not e else "no examples" for r, e in zip(rate, empty)]
     cells["tip_note"] = np.where(small, f"Small sample (fewer than {small_n})", np.where(empty, "Empty: no rate", ""))
 
-    palettes = {"Blue": BLUE_RAMP, "Purple": ["#eee8f5", "#d2bce7", "#ab8bc9", "#8056ad", "#512882"], "Teal": ["#d9f0ed", "#ace0d8", "#68bcb1", "#28887e", "#07564d"]}
-    ramp = palettes.get(palette, BLUE_RAMP)
+    ramp = PALETTES.get(palette, CAFE_RAMP)
+    flip = text_flip(ramp)
     ramp = ramp[::-1] if dark else ramp
     normalized = rate / ceiling
-    cells["dark_fill"] = (normalized <= 1 - TEXT_FLIP) if dark else (normalized >= TEXT_FLIP)
+    cells["dark_fill"] = (normalized <= 1 - flip) if dark else (normalized >= flip)
     # A condition, not a colour scale: a scale here would be merged with the
     # error-rate scale across layers, which Vega-Lite can't render.
     text_color = alt.when(alt.datum.dark_fill).then(alt.value(WHITE)).otherwise(alt.value(INK))
