@@ -280,4 +280,5 @@ The full list is in the [methodology notes](docs/METHODOLOGY.md#limitations).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Code is MIT licensed; see [LICENSE](LICENSE). The bundled UCI wine dataset is
+CC BY 4.0; see [data attribution](data/README.md).

@@ -1,11 +1,11 @@
 # Handoff: finish portfolio improvements 1–7
 
-You are continuing work in the shared Model Failure Atlas repository. The user asked
-to implement seven improvements from the resume-readiness review. Most implementation
-is already in the working tree. Start by reading `git status --short` and `git diff`;
-do not discard the user's pre-existing edit in `app.py` near the consistency footer
-(`Join Successful/Join Failed`). The user then asked for this handoff file, so finish
-the outstanding work below before replacing or deleting it.
+The seven portfolio improvements have been implemented, with public deployment still
+waiting for account access. Implementation commit `5884556` is published on `main`;
+its Linux/macOS CI jobs and lint have passed. Read `git status --short` and `git diff`
+before continuing. The user's pre-existing edit in `app.py` near the consistency
+footer (`Join Successful/Join Failed`) was preserved and excluded from the commit.
+Only the external deployment steps below remain.
 
 ## What is implemented
 
@@ -55,6 +55,8 @@ Tasks 1 and 3–7 are implemented and verified locally. The full suite now has *
 passing tests**. Ruff, dependency checks, all file hooks and whitespace checks pass.
 Dependency lock regeneration is unchanged. The regenerated wine case still has 793
 test rows, 656 correct and 137 errors, and CLI replay matches predictions exactly.
+Clean hosted Linux and macOS jobs also passed installation, tests and benchmark smoke,
+and hosted lint passed: [CI run](https://github.com/jpbanquicio16/2026-Hackathon/actions/runs/36304146796).
 
 Native Safari checks completed the wine existing-predictions flow and a mixed-feature
 Iris upload → CV fit → lock → held-out metrics → cell inspection → CSV/archive download
@@ -68,13 +70,10 @@ footer edit remains intact.
 
 ## Remaining external steps
 
-1. Confirm hosted Linux/macOS CI after publishing the completed changes. Local tests
-   and benchmark smoke have passed; do not call the remote matrix verified until its
-   jobs finish successfully.
-2. Finish task 2 after the user signs in to Streamlit Community Cloud. Safari still
+1. Finish task 2 after the user signs in to Streamlit Community Cloud. Safari still
    shows a sign-in page with Terms of Service acceptance. A request for the user to
    complete this step has been sent; no successful authentication is confirmed.
-3. Deploy the updated code using `main`, `app.py` and Python 3.12; smoke-test the real
+2. Deploy the updated code using `main`, `app.py` and Python 3.12; smoke-test the real
    public app, then add its confirmed URL to README. Do not invent a URL or accept
    legal terms on the user's behalf.
 

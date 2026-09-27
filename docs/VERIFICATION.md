@@ -25,8 +25,10 @@ Community Cloud deployment is still pending authentication.
 | Malformed archives | Pass | Clear data error instead of app exception | Invalid manifest fields and missing package versions rejected; corruption and environment-change checks pass |
 | Cell uncertainty | Pass | Known Wilson bounds, empty cells have no interval, tiny cells are not declared hotspots | Focused tests pass; Holm-adjusted comparisons exposed with caveats |
 | Benchmark correctness smoke | Pass | 1,000 rows, consistent map totals, app renders without exceptions | Passed; full local 1k/10k/50k timings in `benchmarks.md` |
-| Hosted CI on Linux/macOS | Unable to verify | Both clean-install matrix jobs pass on the published changes | Workflow configured; execution not yet confirmed |
+| Hosted CI on Linux/macOS | Pass | Both clean-install matrix jobs, lint and benchmark smoke pass on the published changes | All three jobs passed for implementation commit `5884556` |
 | Public deployment | Unable to verify | Updated public app loads and both workflows work | Community Cloud still requires user sign-in and Terms of Service acceptance |
+
+Hosted results: [CI run for implementation commit 5884556](https://github.com/jpbanquicio16/2026-Hackathon/actions/runs/36304146796).
 
 The wine audit, including all selected-cell IDs, is in
 [`examples/wine_case_study/independent_audit.json`](../examples/wine_case_study/independent_audit.json).
