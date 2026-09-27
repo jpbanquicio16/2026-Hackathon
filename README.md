@@ -76,36 +76,51 @@ imaginary traffic-sign classifier on 1,200 images (see [Sample data](docs/USER_G
    bad (45 of 72 wrong), even though the generator never uses speed directly: blur
    increases with speed. The map shows **where** errors concentrate, not **why**.
 
-## Project structure
+## Architecture
+
+```mermaid
+flowchart TD
+    csv[/"CSV upload or<br/>bundled sample"/] --> load["analysis.py<br/>parse the CSV,<br/>clean labels"]
+    load -->|"analyze mode:<br/>map label columns"| rows
+    load -->|train mode| checks["diagnostics.py<br/>target guidance,<br/>data quality, leakage"]
+    checks --> fit["training.py<br/>split, cross-validate, fit;<br/>predict held-out rows only"]
+    fit --> rows(["Evaluation rows<br/>actual vs predicted<br/>for every example"])
+    rows --> metrics["evaluation.py<br/>metrics, thresholds,<br/>ROC-AUC"]
+    rows --> cells["analysis.py<br/>ranges, cells,<br/>drill-down rows"]
+    metrics --> ui["app.py, ui_training.py<br/>Streamlit UI: overview,<br/>heatmap, inspection"]
+    cells --> ui
+    ui --> report[/"exports.py<br/>CSV, JSON and<br/>HTML report bundle"/]
+```
+
+Both workflows meet at the same evaluation rows: training mode turns its held-out
+predictions into the same actual/predicted table an uploaded CSV provides, so every
+metric, map cell and drill-down comes from one code path. Only `app.py` and
+`ui_training.py` import Streamlit. The other modules are plain pandas and scikit-learn
+code with their own unit tests, and the UI is tested end to end with Streamlit's
+headless `AppTest`.
+
+| Module | Responsibility | Streamlit |
+| --- | --- | --- |
+| `app.py` | Page flow for both workflows: column mapping, overview, probabilities and thresholds, ROC-AUC, heatmap, cell selection, reports | Yes |
+| `ui_training.py` | Training controls, quality and leakage display, experiment history, model comparison and explanations | Yes |
+| `analysis.py` | CSV loading, label cleaning, evaluation rows, overview, ranges and cells | No |
+| `training.py` | Splits, cross-validation, tuning, models, imbalance, calibration, fingerprint, run metadata, comparison and history tables, explanations | No |
+| `evaluation.py` | Regression and per-class metrics, normalised confusion, thresholds, ROC-AUC averaging, uploaded probability validation | No |
+| `diagnostics.py` | Target profile and guidance, class balance, dataset quality, leakage detection | No |
+| `exports.py` | JSON-safe metadata, report files and ZIP bundle | No |
+
+Everything else:
 
 ```text
-app.py                      Streamlit page orchestration: workflows, role mapping, overview,
-                            probabilities/thresholds, ROC-AUC, heatmap, selection, reports
-analysis.py                 Loading, label cleaning, evaluation rows, overview, ranges, cells
-training.py                 Splits, cross-validation, tuning, models, imbalance, calibration,
-                            fingerprint, metadata, comparison/history tables, explanations
-evaluation.py               Metrics: regression, per-class, normalised confusion, thresholds,
-                            ROC-AUC averaging, uploaded probability validation
-diagnostics.py              Target profile and guidance, class balance, dataset quality,
-                            leakage detection
-exports.py                  JSON-safe metadata, report files and ZIP bundle
-ui_training.py              Training controls, quality/leakage display, experiment history,
-                            model comparison and explanation UI
 sample_predictions.csv      Synthetic demo data (traffic signs)
 iris.csv                    Labelled Iris data for training mode
-examples/
-  churn_predictions.csv     Second synthetic dataset with different columns and messy values
-  iris_heldout_predictions.csv  Held-out Iris predictions (see the user guide)
-scripts/
-  make_sample_data.py       Regenerates the synthetic CSVs
-  make_iris_evaluation.py   Regenerates the Iris held-out predictions
-  benchmark_fingerprint.py  Old vs current dataset fingerprint timing
+examples/                   Second synthetic dataset (churn) and held-out Iris predictions
+scripts/                    Regenerate the sample data and Iris predictions; fingerprint benchmark
 docs/                       User guide, methodology, deployment notes and screenshots
 tests/                      pytest suite (see Testing)
-requirements.txt            Runtime dependencies
-requirements-dev.txt        Adds pytest
-.streamlit/config.toml      Upload size limit
 .github/workflows/tests.yml Runs the test suite on Python 3.10 and 3.12
+.streamlit/config.toml      Upload size limit
+requirements*.txt           Runtime and test dependencies
 LICENSE                     MIT license
 ```
 
