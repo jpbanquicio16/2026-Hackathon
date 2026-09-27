@@ -1,4 +1,4 @@
-# AI Error Heatmap
+# Model Failure Atlas
 
 **The model has an overall score, but which kinds of examples does it get wrong?**
 

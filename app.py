@@ -1,4 +1,4 @@
-"""Ai Error Map: where does a classifier get things wrong?
+"""Model Failure Atlas: where does a model get things wrong?
 
     streamlit run app.py
 
@@ -1084,7 +1084,7 @@ def reports_section(raw, evaluation, metadata, fmap, selected, result=None):
 
 
 def main() -> None:
-    st.set_page_config(page_title="AI Error Heatmap", page_icon="🗺️", layout="wide")
+    st.set_page_config(page_title="Model Failure Atlas", page_icon="🗺️", layout="wide")
     st.title("Model Failure Atlas")
     mode = st.radio("Workflow", [ANALYZE_MODE, TRAIN_MODE], horizontal=True, key="workflow")
     task = st.radio("Prediction task", ["Classification", "Regression"], horizontal=True, key="prediction_task").lower()
