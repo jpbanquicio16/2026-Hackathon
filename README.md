@@ -612,7 +612,7 @@ evaluation.py               Metrics: regression, per-class, normalised confusion
 diagnostics.py              Target profile and guidance, class balance, dataset quality,
                             leakage detection
 exports.py                  JSON-safe metadata, report files and ZIP bundle
-ui_experiments.py           Training controls, quality/leakage display, experiment history,
+ui_training.py              Training controls, quality/leakage display, experiment history,
                             model comparison and explanation UI
 sample_predictions.csv      Synthetic demo data (traffic signs)
 iris.csv                    Labelled Iris data for training mode

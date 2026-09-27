@@ -23,7 +23,7 @@ import training as T
 import diagnostics as D
 import evaluation as E
 import exports as X
-import ui_experiments as U
+import ui_training as U
 
 SAMPLE_PATH = Path(__file__).parent / "sample_predictions.csv"
 ANALYZE_MODE = "Analyze an existing prediction CSV"
