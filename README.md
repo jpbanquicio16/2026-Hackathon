@@ -124,6 +124,41 @@ requirements*.txt           Runtime and test dependencies
 LICENSE                     MIT license
 ```
 
+## Design decisions
+
+The choices that most affect whether the numbers can be trusted:
+
+- **Only held-out rows are scored.** In training mode every metric, map cell and
+  drill-down row comes from the test split, and training performance is never shown in
+  its place. Cross-validation and hyperparameter search use the training rows only,
+  and compared models share identical splits, so their scores are a controlled
+  comparison.
+- **Splits follow how the data was collected.** Random splits are stratified, with no
+  silent unstratified fallback. Grouped splits keep every row of a group on one side,
+  and time-ordered splits train on earlier rows and test on later ones. A random split
+  of grouped or time-dependent data puts near-copies of test rows, or future
+  information, into training and inflates the score.
+- **Preprocessing and rebalancing happen inside each fit.** Imputation, scaling, class
+  weights and oversampling are fitted on training folds only, including validation and
+  calibration folds, and test rows are never reweighted or resampled. Fitting them on
+  all rows would leak test-set statistics into training.
+- **Leakage checks warn rather than block.** Columns that copy, encode or determine the
+  target, or have prediction-like names, are flagged with plain-language reasons, and
+  the run metadata records any flagged feature you train on. The checks look at values
+  and names, so they cannot see leakage through feature combinations or post-outcome
+  columns with innocent names; a clean result is not presented as proof.
+- **Equal-width ranges by default.** Every range on an axis spans the same width, so
+  the map reads like an ordinary chart axis, and edges are rounded to readable values
+  that rows are actually assigned by. Skewed features can leave cells nearly empty,
+  which is why quantile and custom boundaries are one setting away.
+- **One cell assignment behind every view.** Each row is assigned to its cell once. The
+  heatmap, the drill-down table and the table view all read that assignment, and the
+  page footer re-checks the totals on the live data.
+- **Nothing is guessed silently.** Labels are compared exactly after trimming, so `01`,
+  `1` and `1.0` stay distinct classes (with a warning). Rows missing a label are
+  excluded and counted, confidence and probability columns are used only after you
+  confirm what they mean, and an empty cell is grey, never 0%.
+
 ## Testing
 
 ```bash

@@ -190,8 +190,6 @@ Where there was more than one reasonable option:
   you can edit it under "Optional columns". Training mode excludes detected IDs.
 - **Confidence** is suggested only for columns named like `confidence`. Names like
   `probability` or `score` are ambiguous (they may be positive-class scores).
-- **Equal-width ranges** (4 × 4 by default). Quantiles and custom boundaries
-  are optional.
 - **Per-class map filtering** is available under **Filter map by class**. The
   class-mix table still covers the most important caveat for unfiltered maps.
 - **Selection** uses two range selectors. Clicking a cell on the map fills the
@@ -199,6 +197,9 @@ Where there was more than one reasonable option:
 - **Sequential colour scales** (blue by default), light to dark (flipped in dark
   mode), with labels on every cell and a table view, so no reading depends on
   colour alone.
+
+Binning, split and validation choices are explained under
+[Design decisions](../README.md#design-decisions) in the README.
 
 ## Limitations
 
