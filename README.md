@@ -642,4 +642,9 @@ requirements.txt            Runtime dependencies
 requirements-dev.txt        Adds pytest
 .streamlit/config.toml      Upload size limit
 .github/workflows/tests.yml Runs the test suite on Python 3.10 and 3.12
+LICENSE                     MIT license
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).
