@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
 
-import analysis as A
+import analysis
 
 AUC_AVERAGES = ("macro", "weighted")
 AUC_STRATEGIES = {"ovr": "one-vs-rest", "ovo": "one-vs-one"}
@@ -15,21 +15,21 @@ PROBABILITY_SUM_TOLERANCE = 1e-5  # rounding noise that needs no comment
 PROBABILITY_REPAIR_TOLERANCE = .02  # larger deviations mean missing or mis-mapped classes
 
 
-def regression_evaluation(raw: pd.DataFrame, actual: str, predicted: str, tolerance: float = 0) -> A.Evaluation:
+def regression_evaluation(raw: pd.DataFrame, actual: str, predicted: str, tolerance: float = 0) -> analysis.Evaluation:
     if actual == predicted:
-        raise A.DataError("The actual and predicted values must come from two different columns.")
+        raise analysis.DataError("The actual and predicted values must come from two different columns.")
     if tolerance < 0 or not np.isfinite(tolerance):
-        raise A.DataError("The error tolerance must be a finite, non-negative number.")
-    truth, pred = A.parse_numeric(raw[actual]), A.parse_numeric(raw[predicted])
+        raise analysis.DataError("The error tolerance must be a finite, non-negative number.")
+    truth, pred = analysis.parse_numeric(raw[actual]), analysis.parse_numeric(raw[predicted])
     no_actual, no_predicted = ~truth.valid, ~pred.valid
     keep = ~(no_actual | no_predicted)
     rows = pd.DataFrame({"actual": truth.values[keep], "predicted": pred.values[keep]})
     rows["residual"] = rows["predicted"] - rows["actual"]
     rows["absolute_error"] = rows["residual"].abs()
     if not np.isfinite(rows["absolute_error"]).all():
-        raise A.DataError("Some residuals overflow numeric precision. Rescale the actual and predicted values.")
+        raise analysis.DataError("Some residuals overflow numeric precision. Rescale the actual and predicted values.")
     rows["is_error"] = rows["absolute_error"] > tolerance
-    return A.Evaluation(
+    return analysis.Evaluation(
         rows, len(raw), int((no_actual & ~no_predicted).sum()),
         int((no_predicted & ~no_actual).sum()), int((no_actual & no_predicted).sum()),
         task="regression", tolerance=tolerance,
@@ -57,7 +57,7 @@ def regression_metrics(rows: pd.DataFrame) -> dict[str, float | int | None]:
 def classification_metrics(rows: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
     if rows.empty:
         return {"evaluated_rows": 0}, pd.DataFrame()
-    classes = A.sort_labels(set(rows["actual"]) | set(rows["predicted"]))
+    classes = analysis.sort_labels(set(rows["actual"]) | set(rows["predicted"]))
     precision, recall, f1, support = precision_recall_fscore_support(
         rows["actual"], rows["predicted"], labels=classes, zero_division=0,
     )
@@ -80,18 +80,18 @@ def normalise_confusion(matrix: pd.DataFrame, mode: str = "Counts") -> pd.DataFr
         return matrix.div(matrix.sum(axis=1).replace(0, np.nan), axis=0) * 100
     if mode == "Predicted class (%)":
         return matrix.div(matrix.sum(axis=0).replace(0, np.nan), axis=1) * 100
-    raise A.DataError("Choose counts, actual-class percentages or predicted-class percentages.")
+    raise analysis.DataError("Choose counts, actual-class percentages or predicted-class percentages.")
 
 
 def apply_threshold(
     raw: pd.DataFrame, predicted: str, probability: str, positive: str, negative: str, threshold: float,
 ) -> tuple[pd.DataFrame, int]:
     if positive == negative or not 0 <= threshold <= 1:
-        raise A.DataError("Choose different binary classes and a threshold between 0 and 1.")
-    parsed = A.parse_numeric(raw[probability]).values
+        raise analysis.DataError("Choose different binary classes and a threshold between 0 and 1.")
+    parsed = analysis.parse_numeric(raw[probability]).values
     valid = parsed.notna() & parsed.between(0, 1)
     changed = raw.copy()
-    backup = A._unique_name("original_prediction", changed.columns)
+    backup = analysis._unique_name("original_prediction", changed.columns)
     changed[backup] = changed[predicted]
     changed[predicted] = np.where(valid, np.where(parsed >= threshold, positive, negative), "")
     return changed, int((~valid).sum())
@@ -103,7 +103,7 @@ def probability_auc(
     """ROC-AUC over actual classes. Weighted averages use actual-class prevalence
     (one-vs-rest) or pair prevalence (one-vs-one, Hand & Till), as scikit-learn does."""
     if average not in AUC_AVERAGES or multi_class not in AUC_STRATEGIES:
-        raise A.DataError("Choose macro or weighted averaging and one-vs-rest or one-vs-one.")
+        raise analysis.DataError("Choose macro or weighted averaging and one-vs-rest or one-vs-one.")
     if rows.empty or probabilities.empty:
         return None, "ROC-AUC is unavailable because there are no class probabilities."
     p = probabilities.reindex(rows.index)
@@ -114,7 +114,7 @@ def probability_auc(
         return None, "ROC-AUC needs at least two actual classes and probabilities for each actual class."
     if not np.allclose(p.sum(axis=1), 1, atol=PROBABILITY_SUM_TOLERANCE):
         return None, "ROC-AUC unavailable: class probabilities must sum to 1 on every evaluated row."
-    actual, classes = rows["actual"], A.sort_labels(actual_classes)
+    actual, classes = rows["actual"], analysis.sort_labels(actual_classes)
     if len(classes) == 2:
         auc = roc_auc_score((actual == classes[1]).astype(int), p[classes[1]])
         return float(auc), "Binary ROC-AUC (the same under every averaging mode)."
@@ -139,10 +139,10 @@ def suggest_probability_columns(columns, classes) -> dict[str, str | None]:
     """Columns whose name contains the class name, e.g. prob_setosa for setosa; never guesses twice."""
     taken, guesses = set(), {}
     for label in classes:
-        wanted = A._name_tokens(str(label))
+        wanted = analysis._name_tokens(str(label))
         match = next((
             column for column in columns
-            if column not in taken and wanted and all(t in A._name_tokens(column) for t in wanted)
+            if column not in taken and wanted and all(t in analysis._name_tokens(column) for t in wanted)
         ), None)
         guesses[label] = match
         if match:
@@ -175,7 +175,7 @@ def map_class_probabilities(raw: pd.DataFrame, rows: pd.DataFrame, mapping: dict
     frame = pd.DataFrame(index=rows.index)
     for label in classes:
         column = mapping[label]
-        parsed = A.parse_numeric(raw.loc[rows.index, column])
+        parsed = analysis.parse_numeric(raw.loc[rows.index, column])
         values = parsed.values
         if parsed.invalid.any():
             errors.append(f"“{column}” (for “{label}”) has {int(parsed.invalid.sum()):,} non-numeric values.")
@@ -199,9 +199,9 @@ def map_class_probabilities(raw: pd.DataFrame, rows: pd.DataFrame, mapping: dict
         warnings.append(f"Row sums differ from 1 by up to {deviation.max():.2g}, probably from rounding. Each row was divided by its sum for ROC-AUC.")
         frame = frame.div(sums, axis=0)
     for label in classes:
-        tokens = A._name_tokens(mapping[label])
-        named = [other for other in classes if other != label and A._name_tokens(str(other)) and all(t in tokens for t in A._name_tokens(str(other)))]
-        if named and not all(t in tokens for t in A._name_tokens(str(label))):
+        tokens = analysis._name_tokens(mapping[label])
+        named = [other for other in classes if other != label and analysis._name_tokens(str(other)) and all(t in tokens for t in analysis._name_tokens(str(other)))]
+        if named and not all(t in tokens for t in analysis._name_tokens(str(label))):
             warnings.append(f"“{mapping[label]}” is mapped to “{label}” but its name mentions “{named[0]}”. Check the mapping.")
     agreement = float((frame.idxmax(axis=1) == rows["predicted"]).mean())
     if agreement < .9:
@@ -224,7 +224,7 @@ def confidence_bins(confidence: pd.Series, is_error: pd.Series, n_bins: int = 10
     return table.reset_index(drop=True)
 
 
-def filter_evaluation(evaluation: A.Evaluation, actual: tuple[str, ...], predicted: tuple[str, ...]) -> A.Evaluation:
+def filter_evaluation(evaluation: analysis.Evaluation, actual: tuple[str, ...], predicted: tuple[str, ...]) -> analysis.Evaluation:
     rows = evaluation.rows
     keep = pd.Series(True, index=rows.index)
     if actual:

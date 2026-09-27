@@ -18,12 +18,25 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import analysis as A
-import training as T
-import diagnostics as D
-import evaluation as E
-import exports as X
-import ui_training as U
+import analysis
+import diagnostics
+import exports
+import training
+import ui_training
+from evaluation import (
+    AUC_AVERAGES,
+    AUC_STRATEGIES,
+    apply_threshold,
+    classification_metrics,
+    confidence_bins,
+    filter_evaluation,
+    map_class_probabilities,
+    normalise_confusion,
+    probability_auc,
+    regression_evaluation,
+    regression_metrics,
+    suggest_probability_columns,
+)
 
 SAMPLE_PATH = Path(__file__).parent / "sample_predictions.csv"
 ANALYZE_MODE = "Analyze an existing prediction CSV"
@@ -118,14 +131,14 @@ def theme_is_dark() -> bool:
 
 # The cache is shared by every visitor to a deployed app, so keep it small.
 @st.cache_data(show_spinner=False, max_entries=4, ttl="1h")
-def load(data: bytes) -> A.LoadedCSV:
-    return A.load_csv(data)
+def load(data: bytes) -> analysis.LoadedCSV:
+    return analysis.load_csv(data)
 
 
 @st.cache_data(show_spinner=False, max_entries=4, ttl="1h")
 def dataset_fingerprint(data: bytes) -> str:
     """Computed once per upload and reused by caches, run signatures and metadata."""
-    return T.fingerprint(load(data).frame)
+    return training.fingerprint(load(data).frame)
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +178,7 @@ def map_settings() -> Settings:
     n_bins = st.select_slider(
         "Ranges per axis",
         options=list(range(2, 9)),
-        value=A.DEFAULT_BINS,
+        value=analysis.DEFAULT_BINS,
         key="n_bins",
         help="Each feature is split into this many equal-width ranges. "
         "Changing it clears the selected cell.",
@@ -174,7 +187,7 @@ def map_settings() -> Settings:
         "Small-sample threshold",
         min_value=2,
         max_value=100_000,
-        value=A.DEFAULT_SMALL_SAMPLE,
+        value=analysis.DEFAULT_SMALL_SAMPLE,
         step=1,
         key="small_n",
         help="Cells with fewer examples than this are marked as small samples, "
@@ -198,9 +211,9 @@ def training_dataset() -> tuple[bytes, str, str] | None:
 
 
 def training_section(
-    loaded: A.LoadedCSV, name: str, dk: str, task: str = "classification", fp: str | None = None,
-) -> tuple[pd.DataFrame, Roles, A.Evaluation, str] | None:
-    trained = U.training_controls(loaded, name, dk, task, fp)
+    loaded: analysis.LoadedCSV, name: str, dk: str, task: str = "classification", fp: str | None = None,
+) -> tuple[pd.DataFrame, Roles, analysis.Evaluation, str] | None:
+    trained = ui_training.training_controls(loaded, name, dk, task, fp)
     if trained is None:
         return None
     result, result_key = trained
@@ -208,7 +221,7 @@ def training_section(
     roles = Roles(result.actual, result.predicted, result.ids, result.confidence, result.confidence is not None,
                   task=result.task, probabilities=result.probability_columns,
                   probability_note=None if result.probability_columns or status == "available" else status)
-    evaluation = A.evaluate(result.frame, result.actual, result.predicted) if result.task == "classification" else E.regression_evaluation(result.frame, result.actual, result.predicted)
+    evaluation = analysis.evaluate(result.frame, result.actual, result.predicted) if result.task == "classification" else regression_evaluation(result.frame, result.actual, result.predicted)
     return result.frame, roles, evaluation, result_key
 
 
@@ -221,7 +234,7 @@ def pick_column(label: str, options: list[str], guess: str | None, key: str, **k
     return st.selectbox(label, options, index=index, key=key, placeholder="Choose a column", **kwargs)
 
 
-def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, task: str = "classification", fp: str | None = None) -> tuple[Roles, A.Evaluation] | None:
+def data_section(raw: pd.DataFrame, loaded: analysis.LoadedCSV, name: str, dk: str, task: str = "classification", fp: str | None = None) -> tuple[Roles, analysis.Evaluation] | None:
     st.header("1 · Data", divider="gray")
     synthetic = " · synthetic demo data" if dk == "sample" else ""
     st.caption(f"**{md(name)}** · {len(raw):,} rows × {raw.shape[1]} columns{synthetic}")
@@ -229,10 +242,10 @@ def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, tas
         st.warning(md(note))
     with st.expander("Preview the first rows"):
         st.dataframe(raw.head(20))
-    U.dataset_quality(raw, fp)
+    ui_training.dataset_quality(raw, fp)
 
     columns = list(raw.columns)
-    actual_guess, predicted_guess = A.suggest_label_columns(columns)
+    actual_guess, predicted_guess = analysis.suggest_label_columns(columns)
     left, right = st.columns(2)
     with left:
         actual_col = pick_column(
@@ -251,11 +264,11 @@ def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, tas
         st.error("The actual and predicted labels must come from two different columns.")
         return None
 
-    label_warning = A.label_role_warning(raw, actual_col, predicted_col) if task == "classification" else None
+    label_warning = analysis.label_role_warning(raw, actual_col, predicted_col) if task == "classification" else None
     if label_warning:
         st.warning(label_warning)
 
-    evaluation = A.evaluate(raw, actual_col, predicted_col) if task == "classification" else E.regression_evaluation(raw, actual_col, predicted_col)
+    evaluation = analysis.evaluate(raw, actual_col, predicted_col) if task == "classification" else regression_evaluation(raw, actual_col, predicted_col)
     report_exclusions(evaluation)
     if evaluation.n_evaluated == 0:
         st.error(
@@ -265,7 +278,7 @@ def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, tas
         return None
 
     labels = pd.concat([evaluation.rows["actual"], evaluation.rows["predicted"]])
-    variants = A.find_label_variants(labels) if task == "classification" else []
+    variants = analysis.find_label_variants(labels) if task == "classification" else []
     if variants:
         shown = "; ".join(" / ".join(f"“{md(v)}”" for v in group) for group in variants[:6])
         more = f" (and {len(variants) - 6} more)" if len(variants) > 6 else ""
@@ -280,7 +293,7 @@ def data_section(raw: pd.DataFrame, loaded: A.LoadedCSV, name: str, dk: str, tas
     return roles, evaluation
 
 
-def report_exclusions(evaluation: A.Evaluation) -> None:
+def report_exclusions(evaluation: analysis.Evaluation) -> None:
     if evaluation.task == "regression":
         st.caption(f"{evaluation.n_uploaded:,} uploaded rows; {evaluation.n_evaluated:,} have finite numeric actual and predicted values. {evaluation.n_excluded:,} missing or non-numeric pairs excluded.")
         return
@@ -303,9 +316,9 @@ def report_exclusions(evaluation: A.Evaluation) -> None:
     )
 
 
-def optional_roles(raw: pd.DataFrame, evaluation: A.Evaluation, actual: str, predicted: str, dk: str, task: str = "classification") -> Roles:
+def optional_roles(raw: pd.DataFrame, evaluation: analysis.Evaluation, actual: str, predicted: str, dk: str, task: str = "classification") -> Roles:
     others = [column for column in raw.columns if column not in (actual, predicted)]
-    id_guess = A.suggest_id_columns(raw, exclude=(actual, predicted))
+    id_guess = analysis.suggest_id_columns(raw, exclude=(actual, predicted))
     ids = st.multiselect(
         "Identifier columns",
         others,
@@ -318,7 +331,7 @@ def optional_roles(raw: pd.DataFrame, evaluation: A.Evaluation, actual: str, pre
         return Roles(actual, predicted, tuple(ids), None, False, task=task)
 
     conf_options: list[str | None] = [None] + [column for column in others if column not in ids]
-    conf_guess = A.suggest_confidence_column(conf_options[1:])
+    conf_guess = analysis.suggest_confidence_column(conf_options[1:])
     confidence = st.selectbox(
         "Confidence column",
         conf_options,
@@ -336,7 +349,7 @@ def optional_roles(raw: pd.DataFrame, evaluation: A.Evaluation, actual: str, pre
             "this unticked: accuracy and the failure map don't need confidence.",
         )
         if confirmed:
-            check = A.check_confidence(raw, evaluation.rows.index, confidence)
+            check = analysis.check_confidence(raw, evaluation.rows.index, confidence)
             if check.usable:
                 confidence_ok = True
                 st.caption(check.message)
@@ -363,7 +376,7 @@ def style_confusion(confusion: pd.DataFrame):
 
 
 def overview_section(
-    raw: pd.DataFrame, evaluation: A.Evaluation, overview: A.Overview, roles: Roles, numeric: tuple[str, ...],
+    raw: pd.DataFrame, evaluation: analysis.Evaluation, overview: analysis.Overview, roles: Roles, numeric: tuple[str, ...],
     heldout: bool = False,
 ) -> None:
     st.header("2 · Held-out test performance" if heldout else "2 · Overall performance", divider="gray")
@@ -405,7 +418,7 @@ def overview_section(
                 "The shaded diagonal counts correct predictions."
             )
             normalisation = st.radio("Confusion matrix values", ["Counts", "Actual class (%)", "Predicted class (%)"], horizontal=True, key="confusion_mode")
-            matrix = E.normalise_confusion(overview.confusion, normalisation)
+            matrix = normalise_confusion(overview.confusion, normalisation)
             if normalisation != "Counts":
                 st.caption("Blank percentages indicate a class with no supporting rows for that denominator.")
             st.dataframe(style_confusion(matrix))
@@ -422,7 +435,7 @@ def overview_section(
             )
     with right:
         st.subheader("Most common mistakes")
-        mistakes = A.top_confusions(overview, limit=6)
+        mistakes = analysis.top_confusions(overview, limit=6)
         if mistakes.empty:
             st.success("No mistakes: every evaluated prediction is correct.")
         else:
@@ -439,7 +452,7 @@ def overview_section(
     with st.expander(f"All {plural(len(error_index), 'error')}"):
         show_rows(raw, evaluation, error_index, roles, lead=(), numeric=numeric)
 
-    metrics, per_class = E.classification_metrics(evaluation.rows)
+    metrics, per_class = classification_metrics(evaluation.rows)
     with st.expander("Precision, recall, F1 and class balance"):
         st.caption("Macro averages give every class equal weight; weighted averages use actual class support. Balanced accuracy is mean recall over actual classes. Undefined precision or recall is reported as 0.")
         st.dataframe(pd.DataFrame([{k: v for k, v in metrics.items() if k not in ("evaluated_rows", "correct", "errors")}]), hide_index=True)
@@ -449,7 +462,7 @@ def overview_section(
 
 def regression_overview(raw, evaluation, roles, numeric, heldout):
     st.header("2 · Held-out test performance" if heldout else "2 · Regression performance", divider="gray")
-    metrics = E.regression_metrics(evaluation.rows)
+    metrics = regression_metrics(evaluation.rows)
     columns = st.columns(5)
     for column, label, key in zip(columns[:3], ("MAE", "RMSE", "R²"), ("mae", "rmse", "r2")):
         value = metrics[key]
@@ -473,8 +486,8 @@ def probability_controls(raw, roles, evaluation, dk):
     if roles.task != "classification":
         return raw, roles, evaluation, probabilities, config
     for label, column in (roles.probabilities or {}).items():
-        probabilities[label] = A.parse_numeric(raw[column]).values
-    classes = A.sort_labels(set(evaluation.rows["actual"]) | set(evaluation.rows["predicted"]))
+        probabilities[label] = analysis.parse_numeric(raw[column]).values
+    classes = analysis.sort_labels(set(evaluation.rows["actual"]) | set(evaluation.rows["predicted"]))
     with st.expander("Class probabilities and binary thresholds"):
         st.caption("Predicted-class confidence and positive-class probability are different. Threshold changes are exploratory; choose deployment thresholds using training/validation data, then evaluate once on an untouched test set.")
         positive, negative, probability = None, None, None
@@ -491,7 +504,7 @@ def probability_controls(raw, roles, evaluation, dk):
                 options = [c for c in raw if c not in (roles.actual, roles.predicted, *roles.ids)]
                 probability = st.selectbox("Positive-class probability column", options, index=None, key=f"positive_column::{dk}")
                 if probability and st.checkbox("This column is P(the selected positive class), between 0 and 1", key=f"positive_confirm::{dk}::{positive}::{probability}"):
-                    values = A.parse_numeric(raw[probability]).values
+                    values = analysis.parse_numeric(raw[probability]).values
                     probabilities[positive] = values
                     probabilities[negative] = 1 - values
                     roles = replace(roles, probabilities={positive: probability})
@@ -502,20 +515,20 @@ def probability_controls(raw, roles, evaluation, dk):
                 if st.checkbox("Explore a decision threshold", key=f"threshold_on::{dk}"):
                     threshold = st.slider("Positive decision threshold", 0.0, 1.0, .5, .01, key=f"threshold::{dk}")
                     old_columns = set(raw)
-                    raw, invalid = E.apply_threshold(raw, roles.predicted, probability, positive, negative, threshold)
+                    raw, invalid = apply_threshold(raw, roles.predicted, probability, positive, negative, threshold)
                     backup = tuple(set(raw) - old_columns)
-                    confidence_col = A._unique_name("threshold_confidence", raw.columns)
-                    p = A.parse_numeric(raw[probability]).values
+                    confidence_col = analysis._unique_name("threshold_confidence", raw.columns)
+                    p = analysis.parse_numeric(raw[probability]).values
                     raw[confidence_col] = np.where(raw[roles.predicted] == positive, p, 1 - p)
                     roles = replace(roles, confidence=confidence_col, confidence_ok=True, extra_reserved=(*roles.extra_reserved, *backup))
-                    evaluation = A.evaluate(raw, roles.actual, roles.predicted)
+                    evaluation = analysis.evaluate(raw, roles.actual, roles.predicted)
                     config.update(threshold=threshold, scope="Exploratory threshold on evaluation rows")
                     st.info(f"Active predictions now use P({md(positive)}) ≥ {threshold:.2f}. Metrics, the map, inspected rows and report downloads below use this threshold. The original fitted prediction is retained in an extra column.")
                     if invalid:
                         st.warning(f"{invalid:,} rows have missing or invalid probabilities; their threshold predictions are blank and excluded.")
-                valid = probabilities[positive].between(0, 1) & A.clean_labels(raw[roles.actual]).notna()
+                valid = probabilities[positive].between(0, 1) & analysis.clean_labels(raw[roles.actual]).notna()
                 if valid.any():
-                    truth = A.clean_labels(raw.loc[valid, roles.actual]) == positive
+                    truth = analysis.clean_labels(raw.loc[valid, roles.actual]) == positive
                     p = probabilities.loc[valid, positive]
                     points = []
                     for threshold in np.linspace(0, 1, 21):
@@ -549,7 +562,7 @@ def class_probability_mapping(raw, roles, evaluation, classes, dk, probabilities
         st.info(f"There are {len(classes):,} classes; mapping is offered for up to {MAX_MAPPED_CLASSES}.")
         return probabilities, roles, {}
     options = [c for c in raw if c not in (roles.actual, roles.predicted, *roles.ids, roles.confidence)]
-    guesses = E.suggest_probability_columns(options, classes)
+    guesses = suggest_probability_columns(options, classes)
     mapping = {}
     grid = st.columns(min(3, len(classes)))
     for i, label in enumerate(classes):
@@ -559,7 +572,7 @@ def class_probability_mapping(raw, roles, evaluation, classes, dk, probabilities
                 f"P({md(label)})", choices, index=choices.index(guesses.get(label)),
                 format_func=lambda c: "Choose a column" if c is None else c, key=f"class_probability::{dk}::{label}",
             )
-    check = E.map_class_probabilities(raw, evaluation.rows, mapping, classes)
+    check = map_class_probabilities(raw, evaluation.rows, mapping, classes)
     for error in check.errors:
         st.error(error)
     for warning in check.warnings:
@@ -581,12 +594,12 @@ def confidence_section(raw, roles, evaluation, probabilities):
         average, strategy = "macro", "ovr"
         if not probabilities.empty and evaluation.rows["actual"].nunique() > 2:
             left, right = st.columns(2)
-            average = left.radio("ROC-AUC average", E.AUC_AVERAGES, horizontal=True, key="auc_average")
-            strategy = right.radio("Multiclass ROC-AUC", list(E.AUC_STRATEGIES), format_func=E.AUC_STRATEGIES.get, horizontal=True, key="auc_multi_class")
-        auc, note = E.probability_auc(evaluation.rows, probabilities, average, strategy)
+            average = left.radio("ROC-AUC average", AUC_AVERAGES, horizontal=True, key="auc_average")
+            strategy = right.radio("Multiclass ROC-AUC", list(AUC_STRATEGIES), format_func=AUC_STRATEGIES.get, horizontal=True, key="auc_multi_class")
+        auc, note = probability_auc(evaluation.rows, probabilities, average, strategy)
         if auc is not None:
             st.metric("ROC-AUC", f"{auc:.4f}")
-            metrics.update(roc_auc=auc, roc_auc_average=average, roc_auc_multi_class=E.AUC_STRATEGIES[strategy])
+            metrics.update(roc_auc=auc, roc_auc_average=average, roc_auc_multi_class=AUC_STRATEGIES[strategy])
             st.caption(note)
         elif roles.probability_note:
             st.info("ROC-AUC is unavailable because this model does not provide class probabilities. " + roles.probability_note)
@@ -598,7 +611,7 @@ def confidence_section(raw, roles, evaluation, probabilities):
             else:
                 st.caption("Choose and confirm a predicted-class confidence column under Optional columns to inspect confidence distributions.")
             return metrics
-        values = A.parse_numeric(raw.loc[evaluation.rows.index, roles.confidence]).values
+        values = analysis.parse_numeric(raw.loc[evaluation.rows.index, roles.confidence]).values
         valid = values.notna() & values.between(0, 1)
         frame = pd.DataFrame({"confidence": values[valid], "result": np.where(evaluation.rows.loc[valid, "is_error"], "Incorrect", "Correct")})
         if frame.empty:
@@ -608,7 +621,7 @@ def confidence_section(raw, roles, evaluation, probabilities):
         st.dataframe(frame.groupby("result").agg(examples=("confidence", "size"), mean_confidence=("confidence", "mean")).reset_index(), hide_index=True)
         chart = alt.Chart(frame).mark_bar(opacity=.6).encode(x=alt.X("confidence:Q", bin=alt.Bin(step=.1, extent=[0, 1]), scale=alt.Scale(domain=[0, 1])), y="count():Q", color="result:N")
         st.altair_chart(chart, width="stretch")
-        bins = E.confidence_bins(values, evaluation.rows["is_error"])
+        bins = confidence_bins(values, evaluation.rows["is_error"])
         st.dataframe(bins, hide_index=True)
         st.caption("Calibration by confidence bin: compare average confidence with observed accuracy. Empty bins have no rate; small bins are uncertain.")
     return metrics
@@ -623,12 +636,12 @@ def pick_axis(label: str, options: tuple[str, ...], key: str, avoid: str | None)
     return st.selectbox(label, options, index=options.index(preferred), key=key)
 
 
-def heatmap(fmap: A.FailureMap, small_n: int, selected: tuple[int | None, int | None], dark: bool,
+def heatmap(fmap: analysis.FailureMap, small_n: int, selected: tuple[int | None, int | None], dark: bool,
             metric: str = "error_rate", palette: str = "Blue", show_counts: bool = True) -> alt.LayerChart:
     cells = fmap.cells.copy()
     cells["x_range"] = [fmap.x_bins.labels[i] for i in cells["x_bin"]]
     cells["y_range"] = [fmap.y_bins.labels[i] for i in cells["y_bin"]]
-    small = A.small_cells(cells, small_n).to_numpy()
+    small = analysis.small_cells(cells, small_n).to_numpy()
     empty = (cells["total"] == 0).to_numpy()
     rate = cells[metric].to_numpy(dtype=float)
     metric_title = {"error_rate": "Error rate", "errors": "Errors", "mae": "Mean absolute error"}[metric]
@@ -739,25 +752,25 @@ def apply_map_click(chart_key: str) -> None:
 
 @st.cache_data(show_spinner=False, max_entries=12, ttl="1h")
 def cached_failure_map(raw, rows, x, y, n_bins, method, x_edges, y_edges):
-    return A.build_failure_map(raw, rows, x, y, n_bins, method, x_edges, y_edges)
+    return analysis.build_failure_map(raw, rows, x, y, n_bins, method, x_edges, y_edges)
 
 
 def failure_map_section(
     raw: pd.DataFrame,
-    evaluation: A.Evaluation,
+    evaluation: analysis.Evaluation,
     roles: Roles,
-    options: A.FeatureOptions,
+    options: analysis.FeatureOptions,
     settings: Settings,
     dk: str,
-) -> A.FailureMap | None:
+) -> analysis.FailureMap | None:
     st.header("3 · Failure map", divider="gray")
     map_evaluation = evaluation
     if roles.task == "classification":
         with st.expander("Filter map by class"):
-            actual_filter = st.multiselect("Actual classes on map", A.sort_labels(evaluation.rows["actual"]), key=f"map_actual::{dk}")
-            predicted_filter = st.multiselect("Predicted classes on map", A.sort_labels(evaluation.rows["predicted"]), key=f"map_predicted::{dk}")
+            actual_filter = st.multiselect("Actual classes on map", analysis.sort_labels(evaluation.rows["actual"]), key=f"map_actual::{dk}")
+            predicted_filter = st.multiselect("Predicted classes on map", analysis.sort_labels(evaluation.rows["predicted"]), key=f"map_predicted::{dk}")
             st.caption("An empty filter means all classes. Filters apply to the map and its inspected rows; the overall metrics above retain every evaluated row. Ranges are recalculated for the filtered rows.")
-        map_evaluation = E.filter_evaluation(evaluation, tuple(actual_filter), tuple(predicted_filter))
+        map_evaluation = filter_evaluation(evaluation, tuple(actual_filter), tuple(predicted_filter))
     if map_evaluation.rows.empty:
         st.session_state["selection_signature"] = None
         st.session_state["sel_x"] = st.session_state["sel_y"] = None
@@ -791,8 +804,8 @@ def failure_map_section(
     if settings.method == "Custom boundaries":
         def default_edges(column):
             try:
-                return ", ".join(str(v) for v in A.make_bins(A.parse_numeric(raw.loc[map_evaluation.rows.index, column]).values, settings.n_bins).edges)
-            except A.DataError:
+                return ", ".join(str(v) for v in analysis.make_bins(analysis.parse_numeric(raw.loc[map_evaluation.rows.index, column]).values, settings.n_bins).edges)
+            except analysis.DataError:
                 return ""
         x_text = st.text_input("X boundaries (comma separated)", default_edges(x_col), key=f"x_edges::{dk}::{x_col}")
         y_text = st.text_input("Y boundaries (comma separated)", default_edges(y_col), key=f"y_edges::{dk}::{y_col}")
@@ -805,7 +818,7 @@ def failure_map_section(
             return None
     try:
         fmap = cached_failure_map(raw, map_evaluation.rows, x_col, y_col, settings.n_bins, settings.method, x_edges, y_edges)
-    except A.DataError as exc:
+    except analysis.DataError as exc:
         st.error(str(exc))
         return None
 
@@ -859,7 +872,7 @@ def failure_map_section(
             **{
                 x_col: [fmap.x_bins.labels[i] for i in fmap.cells["x_bin"]],
                 y_col: [fmap.y_bins.labels[i] for i in fmap.cells["y_bin"]],
-                "small sample": A.small_cells(fmap.cells, settings.small_n),
+                "small sample": analysis.small_cells(fmap.cells, settings.small_n),
             }
         ).sort_values([metric, "total"], ascending=[False, False], na_position="last")
         st.dataframe(
@@ -871,7 +884,7 @@ def failure_map_section(
                 "error_rate": percent_column("error rate"),
             },
         )
-        st.download_button("Download map table", X.map_table(fmap).to_csv(index=False).encode(), "map_cells.csv", on_click="ignore")
+        st.download_button("Download map table", exports.map_table(fmap).to_csv(index=False).encode(), "map_cells.csv", on_click="ignore")
     return fmap
 
 
@@ -888,7 +901,7 @@ def explain_excluded(not_offered: dict[str, str], expanded: bool = False) -> Non
 
 def show_rows(
     raw: pd.DataFrame,
-    evaluation: A.Evaluation,
+    evaluation: analysis.Evaluation,
     index: pd.Index,
     roles: Roles,
     lead: tuple[str, ...],
@@ -897,11 +910,11 @@ def show_rows(
     """The detail table: original columns, mapped columns first."""
     confidence = (roles.confidence,) if roles.confidence_ok else ()
     lead_columns = (*roles.ids, roles.actual, roles.predicted, *lead, *confidence)
-    table = A.detail_table(raw, evaluation.rows["is_error"], index, lead_columns, (*numeric, *confidence))
+    table = analysis.detail_table(raw, evaluation.rows["is_error"], index, lead_columns, (*numeric, *confidence))
     if roles.task == "regression":
         table[table.columns[1]] = np.where(evaluation.rows.loc[index, "is_error"], "Above tolerance", "Within tolerance")
         for column in ("residual", "absolute_error"):
-            table[A._unique_name(column, table.columns)] = evaluation.rows.loc[index, column].to_numpy()
+            table[analysis._unique_name(column, table.columns)] = evaluation.rows.loc[index, column].to_numpy()
     column_config = {
         table.columns[0]: st.column_config.NumberColumn(
             format="%d", help="Row number in the file (1 = first row after the header)."
@@ -917,12 +930,12 @@ def show_rows(
 
 def inspect_section(
     raw: pd.DataFrame,
-    evaluation: A.Evaluation,
-    fmap: A.FailureMap,
+    evaluation: analysis.Evaluation,
+    fmap: analysis.FailureMap,
     roles: Roles,
     numeric: tuple[str, ...],
     settings: Settings,
-) -> A.CellStats | None:
+) -> analysis.CellStats | None:
     st.header("4 · Inspect a cell", divider="gray")
     left, middle, right = st.columns([5, 5, 2], vertical_alignment="bottom")
     with left:
@@ -980,8 +993,8 @@ def inspect_section(
 
     cell_index = fmap.cell_index(sel_x, sel_y)
     if roles.confidence_ok:
-        confidence = A.parse_numeric(raw.loc[cell_index, roles.confidence]).values
-        means = A.confidence_by_result(confidence, evaluation.rows.loc[cell_index, "is_error"])
+        confidence = analysis.parse_numeric(raw.loc[cell_index, roles.confidence]).values
+        means = analysis.confidence_by_result(confidence, evaluation.rows.loc[cell_index, "is_error"])
         parts = [
             f"{means[key]:.2f} on {word} predictions"
             for key, word in (("error", "wrong"), ("correct", "correct"))
@@ -1008,21 +1021,21 @@ def inspect_section(
         with st.expander("Class mix in this cell"):
             st.caption("A cell's error rate can reflect which classes land in it.")
             st.dataframe(
-                percent_table(A.class_breakdown(evaluation.rows.loc[cell_index]), "error rate"),
+                percent_table(analysis.class_breakdown(evaluation.rows.loc[cell_index]), "error rate"),
                 hide_index=True,
                 column_config={"error rate": percent_column()},
             )
     else:
         with st.expander("Residual summary in this cell"):
-            st.dataframe(pd.DataFrame([E.regression_metrics(evaluation.rows.loc[cell_index])]), hide_index=True)
+            st.dataframe(pd.DataFrame([regression_metrics(evaluation.rows.loc[cell_index])]), hide_index=True)
     return stats
 
 
 def consistency_footer(
-    overview: A.Overview | None, fmap: A.FailureMap | None, selection: tuple, stats: A.CellStats | None,
-    evaluation: A.Evaluation | None = None,
+    overview: analysis.Overview | None, fmap: analysis.FailureMap | None, selection: tuple, stats: analysis.CellStats | None,
+    evaluation: analysis.Evaluation | None = None,
 ) -> None:
-    checks = A.consistency_checks(overview, fmap) if overview is not None else [
+    checks = analysis.consistency_checks(overview, fmap) if overview is not None else [
         ("Every regression row has finite residuals", bool(np.isfinite(evaluation.rows["residual"]).all())),
     ]
     if overview is None and fmap is not None:
@@ -1052,13 +1065,13 @@ def reports_section(raw, evaluation, metadata, fmap, selected, result=None):
         st.caption("The report includes active metrics, confusion matrices or residuals, map counts and row assignments, full selected-cell rows, predictions and provenance. Training metadata and cross-validation results are included when available. Files reflect the current threshold, tolerance and map filters.")
         meta = dict(metadata)
         meta["selected_cell_display_errors_only"] = bool(st.session_state.get("errors_only", False))
-        stamp = hashlib.sha256(X.json_bytes([meta, selected, fmap.x_bins.edges if fmap else None, fmap.y_bins.edges if fmap else None])).hexdigest()
+        stamp = hashlib.sha256(exports.json_bytes([meta, selected, fmap.x_bins.edges if fmap else None, fmap.y_bins.edges if fmap else None])).hexdigest()
         if st.button("Prepare evaluation report", key="prepare_report"):
             with st.spinner("Preparing CSV, JSON and HTML report files…"):
-                files = X.evaluation_files(raw, evaluation, meta, fmap, selected)
+                files = exports.evaluation_files(raw, evaluation, meta, fmap, selected)
                 if result is not None and not result.cv_results.empty:
                     files["cross_validation_results.csv"] = result.cv_results.to_csv(index=False).encode()
-                st.session_state["prepared_report"] = (stamp, files, X.bundle(files))
+                st.session_state["prepared_report"] = (stamp, files, exports.bundle(files))
         saved = st.session_state.get("prepared_report")
         if saved and saved[0] == stamp:
             _, files, archive = saved
@@ -1108,7 +1121,7 @@ def main() -> None:
     data, name, dk = dataset
     try:
         loaded = load(data)
-    except A.DataError as exc:
+    except analysis.DataError as exc:
         st.error(f"**{md(name)}** can't be used: {exc}")
         return
     raw = loaded.frame
@@ -1122,7 +1135,7 @@ def main() -> None:
     else:
         try:
             prepared = data_section(raw, loaded, name, dk, task, fp)
-        except A.DataError as exc:
+        except analysis.DataError as exc:
             st.error(str(exc))
             return
         if prepared is None:
@@ -1138,8 +1151,8 @@ def main() -> None:
     if task == "regression":
         tolerance = st.number_input("Absolute error tolerance", min_value=0.0, value=0.0, step=.1, key=f"tolerance::{dk}", help="Used only to count rows above tolerance and filter inspection. MAE/RMSE/R² still use every numeric pair.")
         try:
-            evaluation = E.regression_evaluation(raw, roles.actual, roles.predicted, tolerance)
-        except A.DataError as exc:
+            evaluation = regression_evaluation(raw, roles.actual, roles.predicted, tolerance)
+        except analysis.DataError as exc:
             st.error(str(exc))
             return
         probabilities = pd.DataFrame()
@@ -1150,9 +1163,9 @@ def main() -> None:
     if not evaluation.n_evaluated:
         st.warning("No usable actual/predicted pairs remain for these settings.")
         return
-    options = A.feature_options(raw, evaluation.rows.index, roles.reserved)
+    options = analysis.feature_options(raw, evaluation.rows.index, roles.reserved)
     if task == "classification":
-        overview = A.compute_overview(evaluation.rows)
+        overview = analysis.compute_overview(evaluation.rows)
         overview_section(raw, evaluation, overview, roles, options.usable, heldout=mode == TRAIN_MODE)
         metadata["probability_metrics"] = confidence_section(raw, roles, evaluation, probabilities)
     else:
@@ -1165,7 +1178,7 @@ def main() -> None:
         stats = inspect_section(raw, evaluation, fmap, roles, options.usable, settings)
     selected = (st.session_state.get("sel_x"), st.session_state.get("sel_y"))
     if result is not None:
-        U.model_explanations(result, dk)
+        ui_training.model_explanations(result, dk)
     metadata["map_settings"] = {
         "binning": settings.method, "requested_bins": settings.n_bins, "small_sample_threshold": settings.small_n,
         "palette": settings.palette, "display_metric": st.session_state.get(f"map_metric::{dk}"),

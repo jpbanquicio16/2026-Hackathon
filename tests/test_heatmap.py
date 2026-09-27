@@ -7,16 +7,16 @@ and a layering mistake that once stopped the chart rendering at all.
 
 import pytest
 
-import analysis as A
+import analysis
 import app
 from test_analysis import FIXTURE
 
 
 @pytest.fixture
-def fmap() -> A.FailureMap:
-    raw = A.load_csv(FIXTURE.encode()).frame
-    rows = A.evaluate(raw, "actual", "predicted").rows
-    return A.build_failure_map(raw, rows, "x", "y")  # 6 filled cells, 10 empty
+def fmap() -> analysis.FailureMap:
+    raw = analysis.load_csv(FIXTURE.encode()).frame
+    rows = analysis.evaluate(raw, "actual", "predicted").rows
+    return analysis.build_failure_map(raw, rows, "x", "y")  # 6 filled cells, 10 empty
 
 
 def spec(fmap, selected=(None, None), dark=False, small_n=3) -> dict:

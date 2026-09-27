@@ -6,15 +6,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import analysis as A
-import diagnostics as D
+import analysis
+import diagnostics
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
 def iris():
-    return A.load_csv((ROOT / "iris.csv").read_bytes()).frame
+    return analysis.load_csv((ROOT / "iris.csv").read_bytes()).frame
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def numeric():
 
 
 def finding(raw, target, feature):
-    return next((f for f in D.leakage_findings(raw, target, (feature,)) if f.feature == feature), None)
+    return next((f for f in diagnostics.leakage_findings(raw, target, (feature,)) if f.feature == feature), None)
 
 
 def test_exact_numeric_duplicate_target(numeric):
@@ -99,10 +99,10 @@ def test_suspicious_names_are_tokenised_and_explained(iris, column, term):
 
 
 def test_camel_case_and_acronym_tokenisation():
-    assert D.name_tokens("predictedLabel") == ["predicted", "label"]
-    assert D.name_tokens("PREDScore") == ["pred", "score"]
-    assert D.name_tokens("HTTPResponse-code 2") == ["http", "response", "code", "2"]
-    assert D.name_tokens("prob2") == ["prob", "2"]
+    assert diagnostics.name_tokens("predictedLabel") == ["predicted", "label"]
+    assert diagnostics.name_tokens("PREDScore") == ["pred", "score"]
+    assert diagnostics.name_tokens("HTTPResponse-code 2") == ["http", "response", "code", "2"]
+    assert diagnostics.name_tokens("prob2") == ["prob", "2"]
 
 
 @pytest.mark.parametrize("column", ["sepal_width", "credit_score", "post_code", "postal_zone", "predictor_count", "labelled_by", "afternoon_temp"])
@@ -141,7 +141,7 @@ def test_strong_but_imperfect_correlation_is_not_flagged(numeric):
 
 def test_leakage_table_keeps_the_review_reason_column(iris):
     iris["species_code"] = iris["species"].map({"setosa": "0", "versicolor": "1", "virginica": "2"})
-    table = D.leakage_warnings(iris, "species", ("sepal_length", "species_code"))
+    table = diagnostics.leakage_warnings(iris, "species", ("sepal_length", "species_code"))
     assert table.columns.tolist() == ["feature", "risk", "signals", "review reason"]
     assert table["feature"].tolist() == ["species_code"]
 
@@ -149,12 +149,12 @@ def test_leakage_table_keeps_the_review_reason_column(iris):
 def test_quality_overview_reports_leakage_and_target_balance(iris):
     iris["species_code"] = iris["species"].map({"setosa": "0", "versicolor": "1", "virginica": "2"})
     iris["y_pred"] = iris["species"].sample(frac=1, random_state=0).to_numpy()
-    findings = D.leakage_findings(iris, "species")
-    overview = D.quality_overview(iris, "species", "classification", findings=findings).set_index("check")
+    findings = diagnostics.leakage_findings(iris, "species")
+    overview = diagnostics.quality_overview(iris, "species", "classification", findings=findings).set_index("check")
     assert overview.loc["Potential leakage", "status"] == "Warning"
     assert "2 suspicious columns" in overview.loc["Potential leakage", "detail"]
     assert "species_code (label-encoded copy" in overview.loc["Potential leakage", "detail"]
     assert overview.loc["Target balance", "status"] == "OK"
     assert "3 classes" in overview.loc["Target balance", "detail"] and "33.3%" in overview.loc["Target balance", "detail"]
-    clean = D.quality_overview(iris.drop(columns=["species_code", "y_pred"]), "species", findings=[]).set_index("check")
+    clean = diagnostics.quality_overview(iris.drop(columns=["species_code", "y_pred"]), "species", findings=[]).set_index("check")
     assert clean.loc["Potential leakage", "status"] == "OK"

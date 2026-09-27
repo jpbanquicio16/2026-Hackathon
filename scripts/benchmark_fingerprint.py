@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import training as T  # noqa: E402
+import training  # noqa: E402
 
 
 def old_fingerprint(raw: pd.DataFrame) -> str:
@@ -46,7 +46,7 @@ def timed(function, raw: pd.DataFrame, repeats: int) -> float:
 
 def compare(rows: int = 200_000, columns: int = 12, models: int = 3, repeats: int = 3) -> dict:
     raw = synthetic(rows, columns)
-    old, new = timed(old_fingerprint, raw, repeats), timed(T.fingerprint, raw, repeats)
+    old, new = timed(old_fingerprint, raw, repeats), timed(training.fingerprint, raw, repeats)
     return {
         "rows": rows, "columns": columns, "models": models,
         "old_seconds": old, "new_seconds": new,

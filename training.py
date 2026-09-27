@@ -36,9 +36,9 @@ from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.utils.metaestimators import available_if
 
-import analysis as A
-import diagnostics as D
-import evaluation as E
+import analysis
+import diagnostics
+from evaluation import classification_metrics, regression_evaluation, regression_metrics
 
 CLASSIFIERS = (
     "3-nearest neighbors", "Logistic regression", "Decision tree",
@@ -147,16 +147,16 @@ def _strategy(balance, imbalance) -> str:
     if imbalance is None:
         return "Oversampling" if balance is True else "None" if balance is False else str(balance)
     if balance is True and imbalance != "Oversampling":
-        raise A.DataError("Choose one class-imbalance strategy: class weights or oversampling, not both.")
+        raise analysis.DataError("Choose one class-imbalance strategy: class weights or oversampling, not both.")
     return imbalance
 
 
-def feature_choices(raw: pd.DataFrame, target: str, split_column: str | None = None) -> A.FeatureOptions:
-    ids = A.suggest_id_columns(raw, exclude=(target,))
+def feature_choices(raw: pd.DataFrame, target: str, split_column: str | None = None) -> analysis.FeatureOptions:
+    ids = analysis.suggest_id_columns(raw, exclude=(target,))
     reserved = {target: "target", **{column: "identifier" for column in ids}}
     if split_column:
         reserved[split_column] = "split column"
-    return A.feature_options(raw, raw.index, reserved)
+    return analysis.feature_options(raw, raw.index, reserved)
 
 
 def _estimator(name: str, task: str, seed: int, balance: bool | str, probabilities: bool = True):
@@ -164,7 +164,7 @@ def _estimator(name: str, task: str, seed: int, balance: bool | str, probabiliti
     `probabilities=False` fits an SVM without calibration."""
     strategy = _strategy(balance, None)
     if strategy not in IMBALANCE_STRATEGIES:
-        raise A.DataError("Choose a supported class-imbalance strategy.")
+        raise analysis.DataError("Choose a supported class-imbalance strategy.")
     if task == "classification":
         weight = {"class_weight": "balanced"} if strategy == "Class weights" and supports_class_weights(name) else {}
         choices = {
@@ -186,7 +186,7 @@ def _estimator(name: str, task: str, seed: int, balance: bool | str, probabiliti
             "Gradient boosting": HistGradientBoostingRegressor(max_iter=100, early_stopping=False, random_state=seed),
         }
     if name not in choices:
-        raise A.DataError("Choose a supported model for this task.")
+        raise analysis.DataError("Choose a supported model for this task.")
     estimator = choices[name]
     oversample = strategy == "Oversampling" and task == "classification"
     if oversample:
@@ -220,8 +220,8 @@ def _grid(name: str, prefix: str, min_train: int) -> dict:
 
 
 def _stratification_error(raw: pd.DataFrame, target: str, counts: pd.Series) -> str:
-    singles = A.sort_labels(counts.index[counts < 2])
-    profile = D.target_profile(raw, target)
+    singles = analysis.sort_labels(counts.index[counts < 2])
+    profile = diagnostics.target_profile(raw, target)
     if profile.kind in ("continuous", "ambiguous"):
         return (
             f"Classification cannot create a stratified train/test split because {len(singles):,} of "
@@ -253,7 +253,7 @@ def _fit_error(exc: Exception) -> str:
 
 def _coverage(labels, train, test, split_values, method, seed, candidate) -> tuple[dict, list[str]]:
     """Classes missing from either set make recall, ROC-AUC and the confusion matrix incomplete."""
-    classes = A.sort_labels(set(labels))
+    classes = analysis.sort_labels(set(labels))
     in_train, in_test = set(labels.loc[train]), set(labels.loc[test])
     info = {
         "missing_from_train": [c for c in classes if c not in in_train],
@@ -322,33 +322,33 @@ def _split(raw, labels, test_size, seed, task, method, split_column):
     candidate = None
     if method in ("Grouped", "Time ordered"):
         if split_column not in raw.columns:
-            raise A.DataError("Choose a group or time column for this split.")
+            raise analysis.DataError("Choose a group or time column for this split.")
         if method == "Grouped":
-            split_values = A.clean_labels(raw.loc[usable, split_column])
+            split_values = analysis.clean_labels(raw.loc[usable, split_column])
         else:
             split_values = pd.to_datetime(raw.loc[usable, split_column], errors="coerce", format="mixed", utc=True)
         usable = split_values.dropna().index
         split_values = split_values.loc[usable]
     labels = labels.loc[usable]
     if len(labels) < 4:
-        raise A.DataError("At least four usable labelled rows are needed for a held-out split.")
+        raise analysis.DataError("At least four usable labelled rows are needed for a held-out split.")
     n_test = math.ceil(len(labels) * test_size)
     n_train = len(labels) - n_test
     if method == "Random":
         counts = labels.value_counts()
         if task == "classification":
             if len(counts) < 2:
-                raise A.DataError("Classification needs at least two classes with non-missing targets.")
+                raise analysis.DataError("Classification needs at least two classes with non-missing targets.")
             if counts.min() < 2:
-                raise A.DataError(_stratification_error(raw, labels.name, counts))
+                raise analysis.DataError(_stratification_error(raw, labels.name, counts))
             if min(n_test, n_train) < len(counts):
-                raise A.DataError(f"This split gives {n_train} training and {n_test} test rows for {len(counts)} classes. Both sets need at least one row per class; change the proportion or add examples.")
+                raise analysis.DataError(f"This split gives {n_train} training and {n_test} test rows for {len(counts)} classes. Both sets need at least one row per class; change the proportion or add examples.")
         train, test = train_test_split(usable.to_numpy(), test_size=test_size, random_state=seed, stratify=labels if task == "classification" else None)
         if task == "classification" and (set(labels.loc[train]) != set(labels) or set(labels.loc[test]) != set(labels)):
-            raise A.DataError("The stratified split could not put every class in both sets. Change the proportion or add rare-class examples.")
+            raise analysis.DataError("The stratified split could not put every class in both sets. Change the proportion or add rare-class examples.")
     elif method == "Grouped":
         if split_values.nunique() < 2:
-            raise A.DataError("A grouped split needs at least two distinct groups.")
+            raise analysis.DataError("A grouped split needs at least two distinct groups.")
         # Later partitions from the same seed are tried only when earlier ones leave a
         # class out of either set; the first partition is unchanged, groups stay disjoint.
         splitter = GroupShuffleSplit(n_splits=GROUP_SPLIT_CANDIDATES if task == "classification" else 1, test_size=test_size, random_state=seed)
@@ -366,13 +366,13 @@ def _split(raw, labels, test_size, seed, task, method, split_column):
         train = ordered.index[ordered < cutoff].to_numpy()
         test = ordered.index[ordered >= cutoff].to_numpy()
         if len(train) == 0:
-            raise A.DataError("The time boundary leaves no training rows. Choose another proportion or provide more distinct times.")
+            raise analysis.DataError("The time boundary leaves no training rows. Choose another proportion or provide more distinct times.")
     else:
-        raise A.DataError("Choose a supported split method.")
+        raise analysis.DataError("Choose a supported split method.")
     if len(train) < 2 or len(test) < 1:
-        raise A.DataError("The split needs at least two training rows and one test row.")
+        raise analysis.DataError("The split needs at least two training rows and one test row.")
     if task == "classification" and labels.loc[train].nunique() < 2:
-        raise A.DataError("The training split contains only one class. Change the split or add examples.")
+        raise analysis.DataError("The training split contains only one class. Change the split or add examples.")
     if task == "classification":
         coverage, notes = _coverage(labels, train, test, split_values, method, seed, candidate if method == "Grouped" else None)
     else:
@@ -387,7 +387,7 @@ def _cv_splits(labels, split_values, task, method, folds, repeats, seed):
         max_folds = int(labels.value_counts().min()) if task == "classification" else len(labels)
         folds = min(folds, max_folds)
         if folds < 2:
-            raise A.DataError("Cross-validation needs at least two training examples per class. Disable it or add rare-class examples.")
+            raise analysis.DataError("Cross-validation needs at least two training examples per class. Disable it or add rare-class examples.")
         if task == "classification":
             cv = RepeatedStratifiedKFold(n_splits=folds, n_repeats=repeats, random_state=seed) if repeats > 1 else StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
         else:
@@ -397,7 +397,7 @@ def _cv_splits(labels, split_values, task, method, folds, repeats, seed):
         groups = split_values.loc[labels.index]
         folds = min(folds, groups.nunique())
         if folds < 2:
-            raise A.DataError("Grouped cross-validation needs at least two training groups. Disable it or add groups.")
+            raise analysis.DataError("Grouped cross-validation needs at least two training groups. Disable it or add groups.")
         if task == "classification":
             # Balances class proportions across folds while keeping every group in one fold.
             cv = StratifiedGroupKFold(n_splits=folds, shuffle=True, random_state=seed)
@@ -411,7 +411,7 @@ def _cv_splits(labels, split_values, task, method, folds, repeats, seed):
         unique_times = np.sort(times.unique())
         folds = min(folds, len(unique_times) - 1)
         if folds < 2:
-            raise A.DataError("Time-ordered cross-validation needs at least three distinct training times.")
+            raise analysis.DataError("Time-ordered cross-validation needs at least three distinct training times.")
         splits = []
         for train_times, val_times in TimeSeriesSplit(n_splits=folds).split(unique_times):
             splits.append((np.flatnonzero(times.isin(unique_times[train_times])), np.flatnonzero(times.isin(unique_times[val_times]))))
@@ -419,7 +419,7 @@ def _cv_splits(labels, split_values, task, method, folds, repeats, seed):
         notes.append(f"Cross-validation uses {folds} folds rather than {requested} to fit the available training data.")
     for train, validation in splits:
         if len(train) < 2 or (task == "classification" and labels.iloc[train].nunique() < 2):
-            raise A.DataError("A validation fold has too few rows or only one training class. Reduce folds, disable cross-validation or add examples.")
+            raise analysis.DataError("A validation fold has too few rows or only one training class. Reduce folds, disable cross-validation or add examples.")
     if task == "classification" and method != "Random":
         classes = set(labels)
         partial = sum(set(labels.iloc[validation]) != classes for _, validation in splits)
@@ -439,9 +439,9 @@ def _metrics(actual, predicted, task):
     frame = pd.DataFrame({"actual": np.asarray(actual), "predicted": np.asarray(predicted)})
     if task == "classification":
         frame["is_error"] = frame["actual"] != frame["predicted"]
-        return E.classification_metrics(frame)[0]
-    evaluation = E.regression_evaluation(frame, "actual", "predicted")
-    return E.regression_metrics(evaluation.rows)
+        return classification_metrics(frame)[0]
+    evaluation = regression_evaluation(frame, "actual", "predicted")
+    return regression_metrics(evaluation.rows)
 
 
 def _plain(value):
@@ -470,43 +470,43 @@ def train_and_evaluate(
     `progress(done, total, label)` reports cross-validation fits as they finish."""
     strategy = _strategy(balance, imbalance)
     if target not in raw.columns:
-        raise A.DataError("Choose a target column.")
+        raise analysis.DataError("Choose a target column.")
     if task not in ("classification", "regression"):
-        raise A.DataError("Choose Classification or Regression.")
+        raise analysis.DataError("Choose Classification or Regression.")
     if split_column == target:
-        raise A.DataError("The target cannot be the split column.")
+        raise analysis.DataError("The target cannot be the split column.")
     allowed = feature_choices(raw, target, split_column).usable
     if not features:
-        raise A.DataError("Choose at least one numeric training feature.")
+        raise analysis.DataError("Choose at least one numeric training feature.")
     if len(set(features)) != len(features) or any(c not in allowed for c in features):
-        raise A.DataError("Training features must be numeric, distinct, and exclude the target and identifiers or split column.")
+        raise analysis.DataError("Training features must be numeric, distinct, and exclude the target and identifiers or split column.")
     if not 0 < test_size < 1 or not 0 <= seed <= 2**32 - 1:
-        raise A.DataError("Use a test proportion between 0 and 1 and a seed between 0 and 4294967295.")
+        raise analysis.DataError("Use a test proportion between 0 and 1 and a seed between 0 and 4294967295.")
     if strategy not in IMBALANCE_STRATEGIES:
-        raise A.DataError("Choose None, Class weights or Oversampling for class imbalance.")
+        raise analysis.DataError("Choose None, Class weights or Oversampling for class imbalance.")
     if strategy != "None" and task != "classification":
-        raise A.DataError("Class balancing is available only for classification.")
+        raise analysis.DataError("Class balancing is available only for classification.")
     if strategy == "Class weights" and not supports_class_weights(classifier, task):
-        raise A.DataError(f"{classifier} does not support class weights. Choose Oversampling or a model that accepts class weights.")
+        raise analysis.DataError(f"{classifier} does not support class weights. Choose Oversampling or a model that accepts class weights.")
     if not 0 <= cv_folds <= 10 or cv_folds == 1 or not 1 <= cv_repeats <= 5:
-        raise A.DataError("Use 2–10 validation folds (or disable validation) and 1–5 repeats.")
+        raise analysis.DataError("Use 2–10 validation folds (or disable validation) and 1–5 repeats.")
     if tune and cv_folds < 2:
-        raise A.DataError("Hyperparameter selection requires cross-validation on training data.")
+        raise analysis.DataError("Hyperparameter selection requires cross-validation on training data.")
     if split_method != "Random" and cv_repeats != 1:
-        raise A.DataError("Grouped and time-ordered validation use one pass of folds, not repeated random splits.")
+        raise analysis.DataError("Grouped and time-ordered validation use one pass of folds, not repeated random splits.")
     if classifier == "Calibrated logistic regression" and split_method != "Random":
-        raise A.DataError("Calibrated logistic regression currently supports random splits only; use another classifier for grouped or time-ordered data.")
+        raise analysis.DataError("Calibrated logistic regression currently supports random splits only; use another classifier for grouped or time-ordered data.")
 
-    original_labels = A.clean_labels(raw[target]) if task == "classification" else A.parse_numeric(raw[target]).values
+    original_labels = analysis.clean_labels(raw[target]) if task == "classification" else analysis.parse_numeric(raw[target]).values
     missing_targets = int(original_labels.isna().sum())
     labels, train_rows, test_rows, split_values, coverage, split_notes = _split(raw, original_labels.dropna(), test_size, seed, task, split_method, split_column)
-    values = pd.DataFrame({c: A.parse_numeric(raw[c]).values for c in features})
+    values = pd.DataFrame({c: analysis.parse_numeric(raw[c]).values for c in features})
     X_train, y_train = values.loc[train_rows], labels.loc[train_rows]
     empty_train = X_train.columns[X_train.isna().all()].tolist()
     if empty_train:
-        raise A.DataError("No usable training values for: " + ", ".join(empty_train) + ". Remove those features or choose a different split.")
+        raise analysis.DataError("No usable training values for: " + ", ".join(empty_train) + ". Remove those features or choose a different split.")
     if classifier == "3-nearest neighbors" and len(train_rows) < 3:
-        raise A.DataError("3-nearest neighbors needs at least three training rows; choose another classifier.")
+        raise analysis.DataError("3-nearest neighbors needs at least three training rows; choose another classifier.")
     notes, splits, cv_results = list(split_notes), [], pd.DataFrame()
     best_params, cv_mean, cv_std, cv_method = {}, None, None, "none"
     metric = "balanced_accuracy" if task == "classification" else "neg_mean_absolute_error"
@@ -515,11 +515,11 @@ def train_and_evaluate(
         notes.extend(cv_notes)
         smallest = min(len(tr) for tr, _ in splits)
         if classifier == "3-nearest neighbors" and smallest < 3:
-            raise A.DataError("Nearest neighbors needs at least three rows in every validation training fold. Reduce folds or choose another model.")
+            raise analysis.DataError("Nearest neighbors needs at least three rows in every validation training fold. Reduce folds or choose another model.")
         if classifier == "Calibrated logistic regression" and any(y_train.iloc[tr].value_counts().min() < 2 for tr, _ in splits):
-            raise A.DataError("Calibration needs two examples per class inside every validation training fold. Add examples or choose another classifier.")
+            raise analysis.DataError("Calibration needs two examples per class inside every validation training fold. Add examples or choose another classifier.")
     if classifier == "Calibrated logistic regression" and y_train.value_counts().min() < 2:
-        raise A.DataError("Calibration needs at least two training examples in every class.")
+        raise analysis.DataError("Calibration needs at least two training examples in every class.")
 
     probability_status = None
     svm_probabilities = task == "classification" and classifier == "Support vector machine"
@@ -589,13 +589,13 @@ def train_and_evaluate(
                 model = estimator.fit(X_train, y_train)
             notes.extend(dict.fromkeys(str(w.message) for w in recorded if issubclass(w.category, ConvergenceWarning)))
     except ValueError as exc:
-        raise A.DataError(_fit_error(exc)) from exc
+        raise analysis.DataError(_fit_error(exc)) from exc
     report(1, 1, "Predicting held-out rows")
 
     test_rows = sorted(int(row) for row in test_rows)
     X_test, y_test = values.loc[test_rows], labels.loc[test_rows]
     predicted = model.predict(X_test)
-    original_ids = A.suggest_id_columns(raw, exclude=(target,))
+    original_ids = analysis.suggest_id_columns(raw, exclude=(target,))
     if split_column and split_column not in original_ids:
         original_ids.append(split_column)
     result = raw.loc[test_rows, [*original_ids, *features]].copy()

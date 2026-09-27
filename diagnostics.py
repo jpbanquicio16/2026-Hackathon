@@ -8,11 +8,11 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-import analysis as A
+import analysis
 
 
 def target_suggestion(raw: pd.DataFrame) -> str | None:
-    actual, _ = A.suggest_label_columns(raw.columns)
+    actual, _ = analysis.suggest_label_columns(raw.columns)
     if actual:
         return actual
     names = {c.strip().lower(): c for c in raw.columns}
@@ -20,11 +20,11 @@ def target_suggestion(raw: pd.DataFrame) -> str | None:
 
 
 def dataset_summary(raw: pd.DataFrame) -> pd.DataFrame:
-    ids = set(A.suggest_id_columns(raw))
+    ids = set(analysis.suggest_id_columns(raw))
     records = []
     for column in raw:
-        parsed = A.parse_numeric(raw[column])
-        clean = A.clean_labels(raw[column])
+        parsed = analysis.parse_numeric(raw[column])
+        clean = analysis.clean_labels(raw[column])
         n_valid = int(parsed.valid.sum())
         present = int(clean.notna().sum())
         kind = "numeric" if present and n_valid == present else "mixed numeric/text" if n_valid else "text / categorical"
@@ -44,7 +44,7 @@ def duplicate_count(raw: pd.DataFrame) -> int:
 
 
 def class_counts(labels: pd.Series) -> pd.DataFrame:
-    clean = A.clean_labels(labels).dropna()
+    clean = analysis.clean_labels(labels).dropna()
     counts = clean.value_counts().rename_axis("class").rename("rows").reset_index()
     counts["share"] = counts["rows"] / max(len(clean), 1)
     return counts
@@ -90,15 +90,15 @@ def target_profile(raw: pd.DataFrame, target: str) -> TargetProfile:
     Integer values are not automatically classes: a few whole numbers can be class
     codes, many whole numbers (relative to the rows) look like counts or measurements.
     """
-    all_labels = A.clean_labels(raw[target])
+    all_labels = analysis.clean_labels(raw[target])
     labels = all_labels.dropna()
     n, missing = len(labels), int(all_labels.isna().sum())
     if n == 0:
         return TargetProfile(target, "empty", 0, missing, 0, 0.0, False, "there are no non-missing target values")
     distinct = int(labels.nunique())
-    numbers = A.parse_numeric(labels).values.dropna()
+    numbers = analysis.parse_numeric(labels).values.dropna()
     numeric_share = len(numbers) / n
-    numeric = numeric_share >= A.MIN_NUMERIC_SHARE
+    numeric = numeric_share >= analysis.MIN_NUMERIC_SHARE
     whole = bool(numeric and (numbers == np.floor(numbers)).all())
     ratio = distinct / n
 
@@ -128,11 +128,11 @@ def target_profile(raw: pd.DataFrame, target: str) -> TargetProfile:
 
 def class_warnings(labels: pd.Series) -> list[str]:
     """Classification-only diagnostics; call only when the values are meant as classes."""
-    counts = A.clean_labels(labels).dropna().value_counts()
+    counts = analysis.clean_labels(labels).dropna().value_counts()
     if counts.empty:
         return []
     warnings = []
-    singles = A.sort_labels(counts.index[counts < 2])
+    singles = analysis.sort_labels(counts.index[counts < 2])
     if singles:
         shown = ", ".join(f"“{label}”" for label in singles[:5]) + (", …" if len(singles) > 5 else "")
         warnings.append(
@@ -149,7 +149,7 @@ def class_warnings(labels: pd.Series) -> list[str]:
 
 
 def class_balance(labels: pd.Series) -> dict:
-    counts = A.clean_labels(labels).dropna().value_counts()
+    counts = analysis.clean_labels(labels).dropna().value_counts()
     if counts.empty:
         return {"classes": 0}
     total = int(counts.sum())
@@ -178,7 +178,7 @@ def target_guidance(raw: pd.DataFrame, target: str, task: str, treat_as_classes:
     if task == "regression":
         if profile.kind == "empty":
             warnings.append("There are no usable target values.")
-        elif profile.numeric_share < A.MIN_NUMERIC_SHARE:
+        elif profile.numeric_share < analysis.MIN_NUMERIC_SHARE:
             warnings.append(
                 f"{name} is not numeric ({1 - profile.numeric_share:.0%} of its values are text), so Regression "
                 "cannot use it. Choose Classification or a numeric target."
@@ -191,7 +191,7 @@ def target_guidance(raw: pd.DataFrame, target: str, task: str, treat_as_classes:
                     f"{name} has only {profile.distinct:,} distinct values. Regression treats them as ordered numbers; "
                     "choose Classification if they are unordered categories."
                 )
-            unusable = int((~A.parse_numeric(raw[target]).valid).sum())
+            unusable = int((~analysis.parse_numeric(raw[target]).valid).sum())
             if unusable:
                 warnings.append(f"{unusable:,} targets are missing, non-numeric or infinite and will be excluded.")
         return TargetGuidance(profile, tuple(warnings), tuple(notes), False)
@@ -310,11 +310,11 @@ class _Values:
     @property
     def numeric(self) -> bool:
         present = int(self.text.notna().sum())
-        return present > 0 and int(self.numbers.notna().sum()) >= A.MIN_NUMERIC_SHARE * present
+        return present > 0 and int(self.numbers.notna().sum()) >= analysis.MIN_NUMERIC_SHARE * present
 
 
 def _values(series: pd.Series) -> _Values:
-    return _Values(A.clean_labels(series), A.parse_numeric(series).values)
+    return _Values(analysis.clean_labels(series), analysis.parse_numeric(series).values)
 
 
 def _linear_description(x: np.ndarray, y: np.ndarray) -> str | None:
@@ -370,7 +370,7 @@ def _statistical_reasons(target: _Values, feature: _Values, identifier: bool) ->
             baseline_error = 1 - np.bincount(t_codes).max() / n
             unit = "target class" if not target.numeric else "target value"
             if purity_ft == 1 and purity_tf == 1:
-                pairs = sorted(table.index, key=lambda p: A.label_sort_key(str(f_values[p[0]])))
+                pairs = sorted(table.index, key=lambda p: analysis.label_sort_key(str(f_values[p[0]])))
                 shown = ", ".join(f"{f_values[f]} → {t_values[t]}" for f, t in pairs[:3]) + (", …" if len(pairs) > 3 else "")
                 reasons.append(("label-encoded copy", f"Column appears to be a label-encoded copy of the target: each of its {k_f:,} values corresponds to exactly one {unit} and vice versa ({shown})."))
             elif purity_ft == 1:
@@ -399,7 +399,7 @@ def leakage_findings(raw: pd.DataFrame, target: str, features=None) -> list[Leak
     """
     columns = [c for c in (raw.columns if features is None else features) if c != target and c in raw.columns]
     target_values = _values(raw[target])
-    identifiers = set(A.suggest_id_columns(raw, exclude=(target,)))
+    identifiers = set(analysis.suggest_id_columns(raw, exclude=(target,)))
     class_tokens: dict[str, str] = {}
     labels = target_values.text.dropna()
     if not target_values.numeric and labels.nunique() <= 50:
@@ -454,7 +454,7 @@ def quality_overview(
     if target is not None:
         guidance = target_guidance(raw, target, task, treat_as_classes)
         profile = guidance.profile
-        fits = profile.class_like if task == "classification" else profile.numeric_share >= A.MIN_NUMERIC_SHARE and profile.kind not in ("constant", "empty")
+        fits = profile.class_like if task == "classification" else profile.numeric_share >= analysis.MIN_NUMERIC_SHARE and profile.kind not in ("constant", "empty")
         status = "OK" if fits else "Problem" if profile.kind in ("constant", "empty") else "Warning"
         rows.append(("Target type", status, f"“{target}”: {profile.description} ({profile.reason})"))
         if task == "classification":

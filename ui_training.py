@@ -7,10 +7,10 @@ import re
 import pandas as pd
 import streamlit as st
 
-import analysis as A
-import diagnostics as D
-import exports as X
-import training as T
+import analysis
+import diagnostics
+import exports
+import training
 
 STATUS_ORDER = {"Problem": 0, "Warning": 1, "Review": 2, "Not applicable": 3, "Info": 4, "OK": 5}
 
@@ -18,12 +18,12 @@ STATUS_ORDER = {"Problem": 0, "Warning": 1, "Review": 2, "Not applicable": 3, "I
 # Keyed by the dataset fingerprint; the leading underscore stops Streamlit re-hashing the frame.
 @st.cache_data(show_spinner=False, max_entries=8, ttl="1h")
 def quality_table(fp, _raw):
-    return D.dataset_summary(_raw), D.duplicate_count(_raw)
+    return diagnostics.dataset_summary(_raw), diagnostics.duplicate_count(_raw)
 
 
 @st.cache_data(show_spinner=False, max_entries=16, ttl="1h")
 def leakage_review(fp, target, features, _raw):
-    return D.leakage_findings(_raw, target, None if features is None else list(features))
+    return diagnostics.leakage_findings(_raw, target, None if features is None else list(features))
 
 
 def show_leakage(findings, caption=None):
@@ -40,10 +40,10 @@ def md(text) -> str:
 
 
 def dataset_quality(raw, fp=None, target=None, task="classification", treat_as_classes=False):
-    fp = fp or T.fingerprint(raw)
+    fp = fp or training.fingerprint(raw)
     table, duplicates = quality_table(fp, raw)
     findings = leakage_review(fp, target, None, raw) if target is not None else None
-    overview = D.quality_overview(raw, target, task, treat_as_classes, summary=table, findings=findings)
+    overview = diagnostics.quality_overview(raw, target, task, treat_as_classes, summary=table, findings=findings)
     attention = int(overview["status"].isin(["Problem", "Warning"]).sum())
     label = "Dataset quality summary" + (f" · {attention} check{'s' if attention != 1 else ''} need attention" if attention else "")
     with st.expander(label):
@@ -53,10 +53,10 @@ def dataset_quality(raw, fp=None, target=None, task="classification", treat_as_c
         st.dataframe(table, hide_index=True)
         st.caption(f"{duplicates:,} exact duplicate rows beyond the first occurrence. Rows are retained; review whether repeated observations should stay together in a grouped split.")
         if target is not None and task == "classification":
-            guidance = D.target_guidance(raw, target, task, treat_as_classes)
+            guidance = diagnostics.target_guidance(raw, target, task, treat_as_classes)
             if guidance.show_class_diagnostics:
                 st.markdown("**Target class balance**")
-                counts = D.class_counts(raw[target])
+                counts = diagnostics.class_counts(raw[target])
                 st.dataframe(counts.assign(share=counts["share"] * 100), hide_index=True, column_config={"share": st.column_config.NumberColumn("share (%)", format="%.1f")})
         if findings:
             st.markdown("**Potential leakage across all columns**")
@@ -66,14 +66,14 @@ def dataset_quality(raw, fp=None, target=None, task="classification", treat_as_c
 
 def training_controls(loaded, name, dk, task, fp=None):
     raw = loaded.frame
-    fp = fp or T.fingerprint(raw)
+    fp = fp or training.fingerprint(raw)
     st.header("1 · Train a classifier" if task == "classification" else "1 · Train a regressor", divider="gray")
     st.caption(f"{name} · {len(raw):,} rows × {raw.shape[1]} columns")
     for note in loaded.notes:
         st.warning(note)
     with st.expander("Preview the first rows"):
         st.dataframe(raw.head(20))
-    guess = D.target_suggestion(raw)
+    guess = diagnostics.target_suggestion(raw)
     target = st.selectbox(
         "Target column", list(raw.columns), index=list(raw.columns).index(guess) if guess else None,
         placeholder="Choose a target", key=f"target::{dk}",
@@ -84,14 +84,14 @@ def training_controls(loaded, name, dk, task, fp=None):
         st.session_state.pop("training_result", None)
         st.info("Choose a target column to see the available features.")
         return None
-    profile = D.target_profile(raw, target)
+    profile = diagnostics.target_profile(raw, target)
     treat_as_classes = False
     if task == "classification" and profile.kind in ("continuous", "ambiguous"):
         treat_as_classes = st.checkbox(
             f"Treat the values of “{md(target)}” as classes anyway", key=f"treat_classes::{dk}::{target}",
             help="Shows class counts and imbalance diagnostics for these values. Training still needs at least two rows per value.",
         )
-    guidance = D.target_guidance(raw, target, task, treat_as_classes)
+    guidance = diagnostics.target_guidance(raw, target, task, treat_as_classes)
     st.caption(f"Target type: {profile.description} ({md(profile.reason)}).")
     for warning in guidance.warnings:
         st.warning(warning)
@@ -99,7 +99,7 @@ def training_controls(loaded, name, dk, task, fp=None):
         st.caption(note)
     dataset_quality(raw, fp, target, task, treat_as_classes)
 
-    split_method = st.selectbox("Split method", T.SPLITS, key=f"split::{dk}::{task}")
+    split_method = st.selectbox("Split method", training.SPLITS, key=f"split::{dk}::{task}")
     split_column = None
     if split_method != "Random":
         split_column = st.selectbox("Group column" if split_method == "Grouped" else "Time column", [c for c in raw if c != target], index=None, key=f"split_column::{dk}::{split_method}")
@@ -108,7 +108,7 @@ def training_controls(loaded, name, dk, task, fp=None):
         "Grouped": "All rows from a group stay together. The test proportion applies to groups, so the row proportion can differ. For classification, the app looks for a group partition that puts every class in both sets and warns when that is impossible. Validation also holds out complete groups, balancing classes across folds.",
         "Time ordered": "Train on earlier rows and test on later rows. Equal timestamps stay together. Validation uses expanding time windows. Use a parseable date/time column; invalid times are excluded.",
     }[split_method])
-    options = T.feature_choices(raw, target, split_column)
+    options = training.feature_choices(raw, target, split_column)
     features = st.multiselect("Training features", options.usable, default=list(options.usable), key=f"training_features::{dk}::{target}::{split_column}")
     st.caption(
         "Numeric features only (at least 90% finite numbers among non-missing values). "
@@ -128,7 +128,7 @@ def training_controls(loaded, name, dk, task, fp=None):
         test_percent = st.slider("Test-set proportion (%)", 10, 50, 20, 5, key=f"test_percent::{dk}")
     with middle:
         seed = st.number_input("Random seed", 0, 2**32 - 1, 42, 1, key=f"seed::{dk}")
-    models = T.CLASSIFIERS if task == "classification" else T.REGRESSORS
+    models = training.CLASSIFIERS if task == "classification" else training.REGRESSORS
     with right:
         model = st.selectbox("Classifier" if task == "classification" else "Regressor", models, key=f"classifier::{dk}::{task}")
     with st.expander("Validation, balancing and model comparison", expanded=True):
@@ -142,16 +142,16 @@ def training_controls(loaded, name, dk, task, fp=None):
             st.caption("Selection uses balanced accuracy for classification and MAE for regression. The final test set is never used to fit preprocessing, choose parameters or rank validation candidates.")
         imbalance = "None"
         if task == "classification":
-            choices = [s for s in T.IMBALANCE_STRATEGIES if s != "Class weights" or T.supports_class_weights(model)]
+            choices = [s for s in training.IMBALANCE_STRATEGIES if s != "Class weights" or training.supports_class_weights(model)]
             imbalance = st.selectbox("Class imbalance handling", choices, key=f"imbalance::{dk}::{model}",
                                      help="Class weights reweight the loss; oversampling repeats minority rows. Only one strategy is applied.")
-            if not T.supports_class_weights(model):
+            if not training.supports_class_weights(model):
                 st.caption(f"{model} does not accept class weights, so only oversampling is offered.")
             if imbalance == "Oversampling":
                 st.caption("Minority classes are resampled inside each training fit, including validation and calibration folds. Test rows are never resampled. Probabilities may need recalibration under the real class distribution.")
             elif imbalance == "Class weights":
                 st.caption("class_weight='balanced' weights each class inversely to its training frequency inside every fit. Test rows are never reweighted.")
-        compatible = [m for m in models if m != model and (imbalance != "Class weights" or T.supports_class_weights(m))]
+        compatible = [m for m in models if m != model and (imbalance != "Class weights" or training.supports_class_weights(m))]
         extra = st.multiselect("Also compare these models", compatible, key=f"compare::{dk}::{task}::{model}::{imbalance}")
         if imbalance == "Class weights" and len(compatible) < len(models) - 1:
             st.caption("Models without class-weight support are not offered for comparison under this strategy.")
@@ -186,7 +186,7 @@ def training_controls(loaded, name, dk, task, fp=None):
                     progress.progress(min(position / total, 1.0), text=f"Model {current} of {total}: {label}")
 
                 with st.spinner("Fitting models and validating on training folds…"):
-                    results = T.compare_models(raw, target, tuple(features), selected_models, progress=update, **settings)
+                    results = training.compare_models(raw, target, tuple(features), selected_models, progress=update, **settings)
                 progress.empty()
                 for result in results:
                     result.metadata["source_file"] = name
@@ -201,7 +201,7 @@ def training_controls(loaded, name, dk, task, fp=None):
                 history[run_key] = result
             while len(history) > 10:
                 history.pop(next(iter(history)))
-        except A.DataError as exc:
+        except analysis.DataError as exc:
             st.error(str(exc))
             return None
 
@@ -209,11 +209,11 @@ def training_controls(loaded, name, dk, task, fp=None):
     saved_choice = None
     if history:
         with st.expander("Session experiment history"):
-            table = T.history_table(history)
+            table = training.history_table(history)
             st.dataframe(table, hide_index=True)
-            full = {key: X.json_safe(run.metadata) for key, run in history.items()}
+            full = {key: exports.json_safe(run.metadata) for key, run in history.items()}
             st.download_button("Download experiment history", table.to_csv(index=False).encode(), "experiment_history.csv", on_click="ignore")
-            st.download_button("Download full run metadata (JSON)", X.json_bytes(full), "experiment_history.json", mime="application/json", on_click="ignore")
+            st.download_button("Download full run metadata (JSON)", exports.json_bytes(full), "experiment_history.json", mime="application/json", on_click="ignore")
             st.caption("The latest 10 fitted results stay in this session. Rows with the same split ID are comparable on identical data partitions; different seeds or splits are separate experiments.")
             keys = list(history)
             details = st.selectbox("Show full metadata for run", keys, index=None, key=f"history_details::{dk}")
@@ -222,8 +222,8 @@ def training_controls(loaded, name, dk, task, fp=None):
             compare_keys = st.multiselect("Compare saved runs", keys, key=f"history_compare::{dk}")
             if compare_keys:
                 chosen = [history[k] for k in compare_keys if k in history]
-                if T.comparable(chosen):
-                    st.dataframe(T.comparison_table(chosen), hide_index=True)
+                if training.comparable(chosen):
+                    st.dataframe(training.comparison_table(chosen), hide_index=True)
                 else:
                     st.warning("These runs use different test sets or targets. Their scores are not a controlled model comparison, so no side-by-side table is shown; compare their split details in the history above.")
             saved_choice = st.selectbox("View a saved run", keys, index=None, key=f"history_view::{dk}")
@@ -234,7 +234,7 @@ def training_controls(loaded, name, dk, task, fp=None):
     elif batch:
         if len(batch) > 1:
             st.subheader("Model comparison on the same held-out test set")
-            st.dataframe(T.comparison_table(batch), hide_index=True)
+            st.dataframe(training.comparison_table(batch), hide_index=True)
             selection = st.selectbox("Model to inspect", [r.classifier for r in batch], key=f"inspect_model::{signature}")
             result = next(r for r in batch if r.classifier == selection)
         else:
@@ -276,7 +276,7 @@ def training_controls(loaded, name, dk, task, fp=None):
 
 def model_explanations(result, key):
     with st.expander("Feature importance and row explanations"):
-        note, built_in = T.model_importance(result)
+        note, built_in = training.model_importance(result)
         st.markdown("**Model-based importance**")
         st.caption(note)
         if not built_in.empty:
@@ -287,7 +287,7 @@ def model_explanations(result, key):
 
         def permutation():
             with st.spinner("Shuffling held-out features (3 repeats, up to 500 rows)…"):
-                cache[key] = T.permutation_scores(result)
+                cache[key] = training.permutation_scores(result)
             while len(cache) > 10:
                 cache.pop(next(iter(cache)))
 
@@ -296,7 +296,7 @@ def model_explanations(result, key):
         if st.checkbox("Explain an individual test row", key=f"explain_row::{key}"):
             row = int(st.number_input("Row in held-out CSV", 1, len(result.frame), 1, key=f"explain_id::{key}"))
             st.dataframe(result.frame.loc[[row]])
-            note, table = T.row_explanation(result, row)
+            note, table = training.row_explanation(result, row)
             if table.empty:
                 st.info(note)
                 if built_in.empty and key not in cache:

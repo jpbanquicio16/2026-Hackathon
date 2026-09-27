@@ -9,8 +9,8 @@ import zipfile
 import numpy as np
 import pandas as pd
 
-import analysis as A
-import evaluation as E
+import analysis
+from evaluation import classification_metrics, normalise_confusion, regression_metrics
 
 
 def json_safe(value):
@@ -31,7 +31,7 @@ def json_bytes(value) -> bytes:
     return json.dumps(json_safe(value), indent=2, ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
-def map_table(fmap: A.FailureMap) -> pd.DataFrame:
+def map_table(fmap: analysis.FailureMap) -> pd.DataFrame:
     cells = fmap.cells.copy()
     cells.insert(2, "x_range", [fmap.x_bins.labels[i] for i in cells["x_bin"]])
     cells.insert(3, "y_range", [fmap.y_bins.labels[i] for i in cells["y_bin"]])
@@ -52,15 +52,15 @@ def evaluation_files(raw, evaluation, metadata, fmap=None, selected=None) -> dic
         files["rows_not_evaluated.csv"] = excluded.to_csv(index=True).encode()
     per_class = pd.DataFrame()
     if evaluation.task == "classification":
-        metrics, per_class = E.classification_metrics(evaluation.rows)
+        metrics, per_class = classification_metrics(evaluation.rows)
         metrics.update(meta.get("probability_metrics", {}))
-        confusion = A.compute_overview(evaluation.rows).confusion
+        confusion = analysis.compute_overview(evaluation.rows).confusion
         files["confusion_counts.csv"] = confusion.to_csv().encode()
-        files["confusion_actual_percent.csv"] = E.normalise_confusion(confusion, "Actual class (%)").to_csv().encode()
-        files["confusion_predicted_percent.csv"] = E.normalise_confusion(confusion, "Predicted class (%)").to_csv().encode()
+        files["confusion_actual_percent.csv"] = normalise_confusion(confusion, "Actual class (%)").to_csv().encode()
+        files["confusion_predicted_percent.csv"] = normalise_confusion(confusion, "Predicted class (%)").to_csv().encode()
         files["per_class_metrics.csv"] = per_class.to_csv(index=False).encode()
     else:
-        metrics, confusion = E.regression_metrics(evaluation.rows), pd.DataFrame()
+        metrics, confusion = regression_metrics(evaluation.rows), pd.DataFrame()
         files["residuals.csv"] = evaluation.rows.to_csv(index=True).encode()
     meta["active_metrics"] = metrics
     tables = [("Performance", pd.DataFrame([metrics]))]

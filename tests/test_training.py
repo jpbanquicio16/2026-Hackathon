@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import analysis as A
-import training as T
+import analysis
+import training
 
 ROOT = Path(__file__).resolve().parents[1]
 FEATURES = ("sepal_length", "sepal_width", "petal_length", "petal_width")
@@ -16,12 +16,12 @@ FEATURES = ("sepal_length", "sepal_width", "petal_length", "petal_width")
 
 @pytest.fixture
 def iris():
-    return A.load_csv((ROOT / "iris.csv").read_bytes()).frame
+    return analysis.load_csv((ROOT / "iris.csv").read_bytes()).frame
 
 
 def test_iris_split_and_export_are_reproducible(iris):
-    result = T.train_and_evaluate(iris, "species", FEATURES)
-    again = T.train_and_evaluate(iris, "species", FEATURES)
+    result = training.train_and_evaluate(iris, "species", FEATURES)
+    again = training.train_and_evaluate(iris, "species", FEATURES)
     assert result.csv_bytes() == again.csv_bytes()
     assert len(result.train_rows) == 120 and len(result.test_rows) == 30
     assert not set(result.train_rows) & set(result.test_rows)
@@ -42,10 +42,10 @@ def test_iris_split_and_export_are_reproducible(iris):
 
 
 def test_test_values_cannot_affect_fitted_preprocessing(iris):
-    baseline = T.train_and_evaluate(iris, "species", FEATURES)
+    baseline = training.train_and_evaluate(iris, "species", FEATURES)
     changed = iris.copy()
     changed.loc[list(baseline.test_rows), "sepal_length"] = "999999"
-    result = T.train_and_evaluate(changed, "species", FEATURES)
+    result = training.train_and_evaluate(changed, "species", FEATURES)
     np.testing.assert_array_equal(
         baseline.model["imputer"].statistics_, result.model["imputer"].statistics_,
     )
@@ -56,24 +56,24 @@ def test_test_values_cannot_affect_fitted_preprocessing(iris):
 
 
 def test_missing_features_imputed_for_prediction_but_preserved_for_map(iris):
-    baseline = T.train_and_evaluate(iris, "species", FEATURES)
+    baseline = training.train_and_evaluate(iris, "species", FEATURES)
     changed = iris.copy()
     source_row = baseline.test_rows[0]
     changed.loc[source_row, "sepal_length"] = ""
     changed.loc[baseline.train_rows[0], "sepal_length"] = "bad"
-    result = T.train_and_evaluate(changed, "species", FEATURES)
+    result = training.train_and_evaluate(changed, "species", FEATURES)
     assert result.frame.loc[result.frame["source_row_id"] == source_row, "sepal_length"].iloc[0] == ""
-    evaluation = A.evaluate(result.frame, result.actual, result.predicted)
-    fmap = A.build_failure_map(result.frame, evaluation.rows, "sepal_length", "sepal_width")
+    evaluation = analysis.evaluate(result.frame, result.actual, result.predicted)
+    fmap = analysis.build_failure_map(result.frame, evaluation.rows, "sepal_length", "sepal_width")
     assert evaluation.n_evaluated == 30
     assert fmap.n_mapped == 29 and fmap.n_omitted == 1
     expected = pd.to_numeric(changed.loc[list(result.train_rows), "sepal_length"], errors="coerce").median()
     assert result.model["imputer"].statistics_[0] == expected
 
 
-@pytest.mark.parametrize("classifier", T.CLASSIFIERS)
+@pytest.mark.parametrize("classifier", training.CLASSIFIERS)
 def test_each_classifier_uses_only_heldout_rows(iris, classifier):
-    result = T.train_and_evaluate(iris, "species", FEATURES, classifier=classifier)
+    result = training.train_and_evaluate(iris, "species", FEATURES, classifier=classifier)
     assert len(result.frame) == 30
     assert set(result.frame["source_row_id"]) == set(result.test_rows)
     assert set(result.frame[result.predicted]) <= set(iris["species"])
@@ -83,9 +83,9 @@ def test_each_classifier_uses_only_heldout_rows(iris, classifier):
 def test_target_ids_and_text_cannot_be_training_features(iris, forbidden):
     iris["customer_id"] = [f"c_{i}" for i in iris.index]
     iris["note"] = "text"
-    assert forbidden not in T.feature_choices(iris, "species").usable
-    with pytest.raises(A.DataError, match="exclude the target and identifiers"):
-        T.train_and_evaluate(iris, "species", ("sepal_length", forbidden))
+    assert forbidden not in training.feature_choices(iris, "species").usable
+    with pytest.raises(analysis.DataError, match="exclude the target and identifiers"):
+        training.train_and_evaluate(iris, "species", ("sepal_length", forbidden))
 
 
 @pytest.mark.parametrize("targets, test_size, message", [
@@ -95,14 +95,14 @@ def test_target_ids_and_text_cannot_be_training_features(iris, forbidden):
 ])
 def test_impossible_splits_do_not_fall_back_to_training(targets, test_size, message):
     raw = pd.DataFrame({"target": targets, "x": [i / 10 for i in range(len(targets))]})
-    with pytest.raises(A.DataError, match=message):
-        T.train_and_evaluate(raw, "target", ("x",), test_size=test_size)
+    with pytest.raises(analysis.DataError, match=message):
+        training.train_and_evaluate(raw, "target", ("x",), test_size=test_size)
 
 
 def test_numeric_labels_keep_distinct_spelling_and_missing_targets_drop(iris):
     iris["species"] = iris["species"].map({"setosa": " 01 ", "versicolor": "1", "virginica": "2"})
     iris.loc[1, "species"] = ""
-    result = T.train_and_evaluate(iris, "species", FEATURES)
+    result = training.train_and_evaluate(iris, "species", FEATURES)
     assert result.missing_targets == 1
     assert 1 not in result.train_rows + result.test_rows
     assert set(result.frame[result.actual]) == {"01", "1", "2"}

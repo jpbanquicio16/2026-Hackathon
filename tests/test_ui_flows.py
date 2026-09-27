@@ -9,9 +9,9 @@ import pandas as pd
 import pytest
 from streamlit.testing.v1 import AppTest
 
-import analysis as A
-import evaluation as E
-import training as T
+import analysis
+import evaluation
+import training
 
 ROOT = Path(__file__).resolve().parents[1]
 IRIS = (ROOT / "iris.csv").read_bytes()
@@ -126,7 +126,7 @@ def test_model_comparison_uses_identical_rows_and_blocks_uncontrolled_comparison
 
 
 def test_binary_threshold_changes_metrics_and_keeps_downloads(app):
-    iris = A.load_csv(IRIS).frame
+    iris = analysis.load_csv(IRIS).frame
     open_training(app, csv_bytes(iris[iris["species"] != "setosa"]), "binary_iris.csv")
     selectbox(app, "Classifier").set_value("Logistic regression")
     run(app)
@@ -175,7 +175,7 @@ def test_experiment_history_records_each_run(app):
 
 
 def test_leakage_warning_names_the_feature_and_reason(app):
-    iris = A.load_csv(IRIS).frame
+    iris = analysis.load_csv(IRIS).frame
     iris["species_code"] = iris["species"].map({"setosa": "0", "versicolor": "1", "virginica": "2"})
     open_training(app, csv_bytes(iris), "iris_with_code.csv")
     assert any(w.value == "Possible target leakage: review these selected features before training." for w in app.warning)
@@ -221,7 +221,7 @@ def test_svm_reports_roc_auc_with_averaging_controls(app):
 
 
 def test_grouped_svm_explains_missing_probabilities(app):
-    iris = A.load_csv(IRIS).frame
+    iris = analysis.load_csv(IRIS).frame
     iris["site"] = [f"g{i % 10}" for i in range(len(iris))]
     open_training(app, csv_bytes(iris), "iris_sites.csv")
     selectbox(app, "Split method").set_value("Grouped")
@@ -237,7 +237,7 @@ def test_grouped_svm_explains_missing_probabilities(app):
 
 
 def test_uploaded_multiclass_probabilities_can_be_mapped_for_roc_auc(app):
-    trained = T.train_and_evaluate(A.load_csv(IRIS).frame, "species", FEATURES, classifier="Logistic regression")
+    trained = training.train_and_evaluate(analysis.load_csv(IRIS).frame, "species", FEATURES, classifier="Logistic regression")
     at = app
     at.radio(key="source").set_value("Upload a CSV")
     run(at)
@@ -252,9 +252,9 @@ def test_uploaded_multiclass_probabilities_can_be_mapped_for_roc_auc(app):
     assert not at.error
     checkbox(at, "Each column is P(its class) between 0 and 1, from the same model as the predictions").set_value(True)
     run(at)
-    trained_rows = A.evaluate(trained.frame, trained.actual, trained.predicted).rows
+    trained_rows = analysis.evaluate(trained.frame, trained.actual, trained.predicted).rows
     expected = pd.DataFrame({label: trained.frame[c] for label, c in trained.probability_columns.items()})
-    assert metrics(at)["ROC-AUC"] == f"{E.probability_auc(trained_rows, expected)[0]:.4f}"
+    assert metrics(at)["ROC-AUC"] == f"{evaluation.probability_auc(trained_rows, expected)[0]:.4f}"
 
     selectbox(at, "P(virginica)").set_value(trained.probability_columns["setosa"])
     run(at)
@@ -264,9 +264,9 @@ def test_uploaded_multiclass_probabilities_can_be_mapped_for_roc_auc(app):
 
 def test_dataset_is_fingerprinted_once_per_upload(app, monkeypatch):
     calls = []
-    original = T.fingerprint
-    monkeypatch.setattr(T, "fingerprint", lambda raw: calls.append(len(raw)) or original(raw))
-    iris = A.load_csv(IRIS).frame.assign(batch=[str(i % 7) for i in range(150)])  # not cached by earlier tests
+    original = training.fingerprint
+    monkeypatch.setattr(training, "fingerprint", lambda raw: calls.append(len(raw)) or original(raw))
+    iris = analysis.load_csv(IRIS).frame.assign(batch=[str(i % 7) for i in range(150)])  # not cached by earlier tests
     open_training(app, csv_bytes(iris), "iris_batch.csv")
     assert calls == [150]
     selectbox(app, "Classifier").set_value("Logistic regression")
@@ -288,6 +288,6 @@ def test_models_without_local_explanations_say_so_and_fall_back_to_global_import
     assert any("exposes no built-in feature importance" in c.value for c in explanations.caption)
     checkbox(app, "Explain an individual test row").set_value(True)
     run(app)
-    assert any(i.value.startswith(T.LOCAL_UNAVAILABLE) for i in app.info)
+    assert any(i.value.startswith(training.LOCAL_UNAVAILABLE) for i in app.info)
     importance = next(d.value for d in app.dataframe if "importance" in d.value.columns and "std" in d.value.columns)
     assert set(importance["feature"]) == set(FEATURES)

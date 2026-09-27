@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import analysis as A
+import analysis
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,17 +39,17 @@ r13,B,b,5.0,2.5
 
 @pytest.fixture
 def raw() -> pd.DataFrame:
-    return A.load_csv(FIXTURE.encode()).frame
+    return analysis.load_csv(FIXTURE.encode()).frame
 
 
 @pytest.fixture
-def evaluation(raw) -> A.Evaluation:
-    return A.evaluate(raw, "actual", "predicted")
+def evaluation(raw) -> analysis.Evaluation:
+    return analysis.evaluate(raw, "actual", "predicted")
 
 
 @pytest.fixture
-def fmap(raw, evaluation) -> A.FailureMap:
-    return A.build_failure_map(raw, evaluation.rows, "x", "y", n_bins=4)
+def fmap(raw, evaluation) -> analysis.FailureMap:
+    return analysis.build_failure_map(raw, evaluation.rows, "x", "y", n_bins=4)
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def test_missing_labels_are_excluded_and_counted(evaluation):
 
 
 def test_overview_matches_hand_count(evaluation):
-    overview = A.compute_overview(evaluation.rows)
+    overview = analysis.compute_overview(evaluation.rows)
     # Errors: r2 a->b, r4 b->a, r6 c->a, r8 a->d, r13 B->b.
     assert sorted(evaluation.rows.index[evaluation.rows["is_error"]]) == [2, 4, 6, 8, 13]
     assert (overview.n_evaluated, overview.n_correct, overview.n_errors) == (11, 6, 5)
@@ -80,7 +80,7 @@ def test_overview_matches_hand_count(evaluation):
 
 
 def test_confusion_matrix_uses_union_of_classes(evaluation):
-    overview = A.compute_overview(evaluation.rows)
+    overview = analysis.compute_overview(evaluation.rows)
     confusion = overview.confusion
     # "d" is only ever predicted; "c" and "B" are never predicted.
     assert list(confusion.index) == ["a", "B", "b", "c", "d"]
@@ -103,21 +103,21 @@ def test_confusion_matrix_uses_union_of_classes(evaluation):
 
 
 def test_top_confusions_counts_off_diagonal_only(evaluation):
-    top = A.top_confusions(A.compute_overview(evaluation.rows), limit=10)
+    top = analysis.top_confusions(analysis.compute_overview(evaluation.rows), limit=10)
     assert top["errors"].sum() == 5
     assert set(zip(top["actual"], top["predicted"])) == {("a", "b"), ("a", "d"), ("B", "b"), ("b", "a"), ("c", "a")}
     assert top["share of errors"].sum() == pytest.approx(1.0)
 
 
 def test_labels_are_trimmed_but_never_merged():
-    cleaned = A.clean_labels(pd.Series([" stop ", "Stop", "01", "1", "", "NA", "None", "n/a", "\tyield\n"]))
+    cleaned = analysis.clean_labels(pd.Series([" stop ", "Stop", "01", "1", "", "NA", "None", "n/a", "\tyield\n"]))
     assert cleaned.tolist() == ["stop", "Stop", "01", "1", None, None, "None", None, "yield"]
 
 
 def test_label_variants_are_reported(evaluation):
     labels = pd.concat([evaluation.rows["actual"], evaluation.rows["predicted"]])
-    assert A.find_label_variants(labels) == [("B", "b")]
-    assert A.find_label_variants(["1", "1.0", "01", "2", "stop", "Stop ", "no  entry", "no entry"]) == [
+    assert analysis.find_label_variants(labels) == [("B", "b")]
+    assert analysis.find_label_variants(["1", "1.0", "01", "2", "stop", "Stop ", "no  entry", "no entry"]) == [
         ("01", "1", "1.0"),
         ("no  entry", "no entry"),
         ("stop", "Stop "),
@@ -188,33 +188,33 @@ def test_selected_cell_rows_match_its_numbers(fmap):
 
 
 def test_small_cells_are_flagged_not_hidden(fmap):
-    flags = A.small_cells(fmap.cells, threshold=3)
+    flags = analysis.small_cells(fmap.cells, threshold=3)
     flagged = {(int(c.x_bin), int(c.y_bin)) for c, f in zip(fmap.cells.itertuples(), flags) if f}
     assert flagged == {(0, 0), (1, 0), (1, 1), (2, 1), (2, 2)}  # (3, 3) has 3, empties excluded
 
 
 def test_consistency_checks_pass(evaluation, fmap):
-    checks = A.consistency_checks(A.compute_overview(evaluation.rows), fmap)
+    checks = analysis.consistency_checks(analysis.compute_overview(evaluation.rows), fmap)
     assert len(checks) == 6
     assert all(ok for _, ok in checks), checks
 
 
 def test_same_feature_on_both_axes_is_rejected(raw, evaluation):
-    with pytest.raises(A.DataError, match="two different features"):
-        A.build_failure_map(raw, evaluation.rows, "x", "x")
+    with pytest.raises(analysis.DataError, match="two different features"):
+        analysis.build_failure_map(raw, evaluation.rows, "x", "x")
 
 
 def test_non_numeric_feature_is_rejected(raw, evaluation):
-    with pytest.raises(A.DataError, match="No evaluated row has numeric values"):
-        A.build_failure_map(raw, evaluation.rows, "id", "y")
+    with pytest.raises(analysis.DataError, match="No evaluated row has numeric values"):
+        analysis.build_failure_map(raw, evaluation.rows, "id", "y")
 
 
 def test_feature_constant_on_mapped_rows_is_explained():
     # x varies overall, but the only row with a different x has no y.
-    raw = A.load_csv(b"actual,predicted,x,y\na,a,1,1\na,b,1,2\nb,b,5,\n").frame
-    rows = A.evaluate(raw, "actual", "predicted").rows
-    with pytest.raises(A.DataError, match="x can't be split into ranges"):
-        A.build_failure_map(raw, rows, "x", "y")
+    raw = analysis.load_csv(b"actual,predicted,x,y\na,a,1,1\na,b,1,2\nb,b,5,\n").frame
+    rows = analysis.evaluate(raw, "actual", "predicted").rows
+    with pytest.raises(analysis.DataError, match="x can't be split into ranges"):
+        analysis.build_failure_map(raw, rows, "x", "y")
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ def test_feature_constant_on_mapped_rows_is_explained():
 
 
 def test_boundary_values_belong_to_the_upper_range():
-    bins = A.make_bins([0.0, 1.5, 8.0])  # edges 0, 2, 4, 6, 8
+    bins = analysis.make_bins([0.0, 1.5, 8.0])  # edges 0, 2, 4, 6, 8
     assert bins.assign([0.0, 1.999, 2.0, 4.0, 6.0, 7.99, 8.0]).tolist() == [0, 0, 1, 2, 3, 3, 3]
 
 
@@ -230,7 +230,7 @@ def test_printed_edges_are_the_edges_used():
     # Unrounded, the last inner edge is 0.1 + 2 * 0.1 = 0.30000000000000004,
     # which would put a value of exactly 0.3 in the range printed "[0.20, 0.30)".
     assert 0.1 + 2 * ((0.4 - 0.1) / 3) > 0.3
-    bins = A.make_bins([0.1, 0.2, 0.3, 0.4], 3)
+    bins = analysis.make_bins([0.1, 0.2, 0.3, 0.4], 3)
     assert bins.labels == ("[0.10, 0.20)", "[0.20, 0.30)", "[0.30, 0.40]")
     assert bins.assign([0.1, 0.2, 0.3, 0.4]).tolist() == [0, 1, 2, 2]
     assert bins.describe(1, "p") == "0.20 ≤ p < 0.30"
@@ -239,12 +239,12 @@ def test_printed_edges_are_the_edges_used():
 
 def test_repeated_values_are_each_counted_once():
     values = [1.5, 1.5, 1.5, 3.0, 3.0, 4.5]
-    bins = A.make_bins(values, 3)  # edges 1.5, 2.5, 3.5, 4.5
+    bins = analysis.make_bins(values, 3)  # edges 1.5, 2.5, 3.5, 4.5
     assert np.bincount(bins.assign(values), minlength=3).tolist() == [3, 2, 1]
 
 
 def test_whole_numbers_get_whole_number_ranges():
-    bins = A.make_bins(np.arange(18, 80), 4)  # 62 ages split as evenly as possible
+    bins = analysis.make_bins(np.arange(18, 80), 4)  # 62 ages split as evenly as possible
     assert bins.whole_numbers
     assert bins.labels == ("18–33", "34–48", "49–64", "65–79")
     assert bins.assign([18, 33, 34, 79]).tolist() == [0, 0, 1, 3]
@@ -252,20 +252,20 @@ def test_whole_numbers_get_whole_number_ranges():
 
 
 def test_few_whole_values_get_one_range_each():
-    bins = A.make_bins([0, 1, 2, 2, 1], 4)
+    bins = analysis.make_bins([0, 1, 2, 2, 1], 4)
     assert bins.labels == ("0", "1", "2")
     assert bins.assign([0, 1, 2]).tolist() == [0, 1, 2]
     assert bins.describe(1, "calls") == "calls = 1"
-    assert A.make_bins([0, 1, 1, 0]).labels == ("0", "1")
+    assert analysis.make_bins([0, 1, 1, 0]).labels == ("0", "1")
 
 
 def test_negative_whole_numbers_are_written_with_words():
-    assert A.make_bins(np.arange(-10, 10), 2).labels == ("-10 to -1", "0–9")
+    assert analysis.make_bins(np.arange(-10, 10), 2).labels == ("-10 to -1", "0–9")
 
 
 def test_single_value_cannot_be_split():
-    with pytest.raises(A.DataError, match="nothing to split"):
-        A.make_bins([3.0, 3.0, 3.0])
+    with pytest.raises(analysis.DataError, match="nothing to split"):
+        analysis.make_bins([3.0, 3.0, 3.0])
 
 
 @pytest.mark.parametrize("seed", range(4))
@@ -282,12 +282,12 @@ def test_invariants_hold_on_random_data(seed, n_bins):
         }
     )
     frame.loc[rng.choice(n, 20, replace=False), "x"] = ""
-    raw = A.load_csv(frame.to_csv(index=False).encode()).frame
-    evaluation = A.evaluate(raw, "actual", "predicted")
-    overview = A.compute_overview(evaluation.rows)
-    fmap = A.build_failure_map(raw, evaluation.rows, "x", "y", n_bins)
+    raw = analysis.load_csv(frame.to_csv(index=False).encode()).frame
+    evaluation = analysis.evaluate(raw, "actual", "predicted")
+    overview = analysis.compute_overview(evaluation.rows)
+    fmap = analysis.build_failure_map(raw, evaluation.rows, "x", "y", n_bins)
 
-    assert all(ok for _, ok in A.consistency_checks(overview, fmap))
+    assert all(ok for _, ok in analysis.consistency_checks(overview, fmap))
     for cell in fmap.cells.itertuples():
         assert len(fmap.cell_index(cell.x_bin, cell.y_bin)) == cell.total
         assert len(fmap.cell_index(cell.x_bin, cell.y_bin, errors_only=True)) == cell.errors
@@ -315,30 +315,30 @@ def test_invariants_hold_on_random_data(seed, n_bins):
     ],
 )
 def test_unusable_files_are_rejected_with_a_reason(content, message):
-    with pytest.raises(A.DataError, match=message):
-        A.load_csv(content)
+    with pytest.raises(analysis.DataError, match=message):
+        analysis.load_csv(content)
 
 
 def test_awkward_but_readable_files_load_with_notes():
-    bom = A.load_csv(b"\xef\xbb\xbfactual,predicted\na,b\n")
+    bom = analysis.load_csv(b"\xef\xbb\xbfactual,predicted\na,b\n")
     assert list(bom.frame.columns) == ["actual", "predicted"] and not bom.notes
 
-    semicolons = A.load_csv(b"actual;predicted;x\na;a;1\n")
+    semicolons = analysis.load_csv(b"actual;predicted;x\na;a;1\n")
     assert list(semicolons.frame.columns) == ["actual", "predicted", "x"]
     assert "semicolons" in semicolons.notes[0]
 
-    latin = A.load_csv("actual,predicted\ncafé,café\n".encode("latin-1"))
+    latin = analysis.load_csv("actual,predicted\ncafé,café\n".encode("latin-1"))
     assert latin.frame.loc[1, "actual"] == "café" and "Latin-1" in latin.notes[0]
 
-    short = A.load_csv(b"a,b,c\n1,2\n")
+    short = analysis.load_csv(b"a,b,c\n1,2\n")
     assert short.frame.loc[1, "c"] == ""
 
-    repeated = A.load_csv(b"x,x,y\n1,2,3\n")
+    repeated = analysis.load_csv(b"x,x,y\n1,2,3\n")
     assert list(repeated.frame.columns) == ["x", "x.1", "y"] and "Repeated" in repeated.notes[0]
 
 
 def test_parse_numeric_separates_missing_from_invalid():
-    parsed = A.parse_numeric(pd.Series(["1", " 2.5 ", "", "NA", "abc", "inf", "1e3", "1,234"]))
+    parsed = analysis.parse_numeric(pd.Series(["1", " 2.5 ", "", "NA", "abc", "inf", "1e3", "1,234"]))
     assert parsed.values.tolist()[:2] == [1.0, 2.5] and parsed.values.iloc[6] == 1000.0
     assert parsed.missing.tolist() == [False, False, True, True, False, False, False, False]
     assert parsed.invalid.tolist() == [False, False, False, False, True, True, False, True]
@@ -356,7 +356,7 @@ def test_parse_numeric_separates_missing_from_invalid():
     ],
 )
 def test_label_columns_are_suggested_by_name(columns, expected):
-    assert A.suggest_label_columns(columns) == expected
+    assert analysis.suggest_label_columns(columns) == expected
 
 
 def test_identifier_columns_are_suggested():
@@ -372,21 +372,21 @@ def test_identifier_columns_are_suggested():
             "age": [str(20 + i % 7) for i in range(rows)],
         }
     )
-    assert A.suggest_id_columns(frame) == ["customerID", "zip", "counter", "Unnamed: 0"]
+    assert analysis.suggest_id_columns(frame) == ["customerID", "zip", "counter", "Unnamed: 0"]
 
 
 def test_confidence_is_suggested_only_when_named_as_such():
-    assert A.suggest_confidence_column(["actual", "predicted", "model_confidence"]) == "model_confidence"
-    assert A.suggest_confidence_column(["actual", "predicted", "churn_probability", "score"]) is None
+    assert analysis.suggest_confidence_column(["actual", "predicted", "model_confidence"]) == "model_confidence"
+    assert analysis.suggest_confidence_column(["actual", "predicted", "churn_probability", "score"]) is None
 
 
 def test_feature_options_explain_every_exclusion():
-    raw = A.load_csv(
+    raw = analysis.load_csv(
         b"row_id,actual,predicted,age,constant,city,score\n"
         b"1,a,a,20,5,Paris,0.5\n2,a,b,30,5,Rome,0.7\n3,b,b,40,5,Oslo,0.9\n4,b,a,50,5,Rome,1.2\n"
     ).frame
     reserved = {"actual": "actual label", "predicted": "predicted label", "row_id": "identifier"}
-    options = A.feature_options(raw, raw.index, reserved)
+    options = analysis.feature_options(raw, raw.index, reserved)
     assert options.usable == ("age", "score")
     assert options.excluded == {
         "row_id": "identifier",
@@ -400,7 +400,7 @@ def test_feature_options_explain_every_exclusion():
 def test_mostly_numeric_column_stays_usable():
     values = [str(i) for i in range(19)] + ["twelve"]
     raw = pd.DataFrame({"f": values}, index=pd.RangeIndex(1, 21))
-    assert A.feature_options(raw, raw.index, {}).usable == ("f",)
+    assert analysis.feature_options(raw, raw.index, {}).usable == ("f",)
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +408,7 @@ def test_mostly_numeric_column_stays_usable():
 
 
 def test_detail_table_shows_original_rows_with_result(raw, evaluation):
-    table = A.detail_table(
+    table = analysis.detail_table(
         raw, evaluation.rows["is_error"], pd.Index([6, 7, 8]),
         lead_columns=["id", "actual", "predicted", "x", "y"], numeric_columns=["x", "y"],
     )
@@ -419,33 +419,33 @@ def test_detail_table_shows_original_rows_with_result(raw, evaluation):
 
 
 def test_detail_table_keeps_invalid_values_visible(raw, evaluation):
-    table = A.detail_table(raw, evaluation.rows["is_error"], pd.Index([12]), numeric_columns=["x"])
+    table = analysis.detail_table(raw, evaluation.rows["is_error"], pd.Index([12]), numeric_columns=["x"])
     assert table.loc[0, "x"] == "abc"
 
 
 def test_detail_table_never_overwrites_a_user_column():
-    raw = A.load_csv(b"actual,predicted,result\na,b,keep me\n").frame
-    rows = A.evaluate(raw, "actual", "predicted").rows
-    table = A.detail_table(raw, rows["is_error"], rows.index)
+    raw = analysis.load_csv(b"actual,predicted,result\na,b,keep me\n").frame
+    rows = analysis.evaluate(raw, "actual", "predicted").rows
+    table = analysis.detail_table(raw, rows["is_error"], rows.index)
     assert list(table.columns) == ["row", "result (atlas)", "actual", "predicted", "result"]
     assert table.loc[0, "result"] == "keep me"
 
 
 def test_confidence_must_be_a_probability():
-    raw = A.load_csv(b"actual,predicted,conf,pct\na,a,0.9,90\na,b,0.4,40\nb,b,,55\n").frame
-    assert A.check_confidence(raw, raw.index, "conf").usable
-    check = A.check_confidence(raw, raw.index, "pct")
+    raw = analysis.load_csv(b"actual,predicted,conf,pct\na,a,0.9,90\na,b,0.4,40\nb,b,,55\n").frame
+    assert analysis.check_confidence(raw, raw.index, "conf").usable
+    check = analysis.check_confidence(raw, raw.index, "pct")
     assert not check.usable and "outside 0–1" in check.message
 
 
 def test_confidence_by_result():
-    means = A.confidence_by_result(pd.Series([0.9, 0.8, 0.4, np.nan]), pd.Series([False, False, True, True]))
+    means = analysis.confidence_by_result(pd.Series([0.9, 0.8, 0.4, np.nan]), pd.Series([False, False, True, True]))
     assert means["correct"] == pytest.approx(0.85)
     assert means["error"] == pytest.approx(0.4)
 
 
 def test_class_breakdown(evaluation):
-    breakdown = A.class_breakdown(evaluation.rows)
+    breakdown = analysis.class_breakdown(evaluation.rows)
     assert breakdown.iloc[0].tolist() == ["a", 6, 2, pytest.approx(2 / 6)]
     assert breakdown["examples"].sum() == evaluation.n_evaluated
 
@@ -455,16 +455,16 @@ def test_class_breakdown(evaluation):
 
 
 def test_sample_dataset_supports_the_demo():
-    raw = A.load_csv((ROOT / "sample_predictions.csv").read_bytes()).frame
-    evaluation = A.evaluate(raw, "actual", "predicted")
+    raw = analysis.load_csv((ROOT / "sample_predictions.csv").read_bytes()).frame
+    evaluation = analysis.evaluate(raw, "actual", "predicted")
     assert (evaluation.n_uploaded, evaluation.n_excluded) == (1200, 8)
-    overview = A.compute_overview(evaluation.rows)
+    overview = analysis.compute_overview(evaluation.rows)
     assert 0.8 < overview.accuracy < 0.9
     assert overview.predicted_only == ("speed_80",)
 
-    fmap = A.build_failure_map(raw, evaluation.rows, "brightness", "blur_px")
+    fmap = analysis.build_failure_map(raw, evaluation.rows, "brightness", "blur_px")
     assert fmap.omitted == {"blur_px is blank": 12}
     worst = fmap.cells.loc[fmap.cells["error_rate"].idxmax()]
     assert (worst["x_bin"], worst["y_bin"]) == (0, 3)  # darkest and blurriest
     assert worst["error_rate"] > 3 * overview.error_rate
-    assert all(ok for _, ok in A.consistency_checks(overview, fmap))
+    assert all(ok for _, ok in analysis.consistency_checks(overview, fmap))
