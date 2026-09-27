@@ -1,5 +1,7 @@
 # Model Failure Atlas
 
+[![Tests](https://github.com/jpbanquicio16/2026-Hackathon/actions/workflows/tests.yml/badge.svg)](https://github.com/jpbanquicio16/2026-Hackathon/actions/workflows/tests.yml)
+
 **The model has an overall score, but which kinds of examples does it get wrong?**
 
 Model Failure Atlas is a Streamlit app for exploring where a model goes wrong.
@@ -49,7 +51,7 @@ app's performance numbers.
 
 ## Quick start
 
-Requires Python 3.10 or newer (tested on 3.12).
+Requires Python 3.10 or newer. CI runs the test suite on Python 3.10 and 3.12.
 
 ```bash
 git clone https://github.com/jpbanquicio16/2026-Hackathon.git
@@ -639,4 +641,5 @@ tests/
 requirements.txt            Runtime dependencies
 requirements-dev.txt        Adds pytest
 .streamlit/config.toml      Upload size limit
+.github/workflows/tests.yml Runs the test suite on Python 3.10 and 3.12
 ```
