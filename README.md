@@ -4,6 +4,8 @@
 
 **The model has an overall score, but which kinds of examples does it get wrong?**
 
+![Failure map of the synthetic traffic-sign sample: error rate by brightness and blur. Dark, blurry images are wrong 70% of the time (37 of 53), against 15.2% across all mapped rows.](docs/images/failure-map.png)
+
 Model Failure Atlas is a Streamlit app for exploring where a model goes wrong.
 Choose one of two workflows at the top of the page: analyze existing predictions,
 or train a model and generate held-out predictions. Choose **Classification** or
@@ -296,6 +298,8 @@ imaginary traffic-sign classifier on 1,200 images (see [Sample data](#sample-dat
    those 53 rows; switch on **Errors only** to see the 37 mistakes. If you open
    **Optional columns** and confirm what the confidence column means, the app also
    shows that the model's average confidence on those mistakes is still 0.62.
+
+   ![Inspecting the dark, blurry cell: 37 errors out of 53 examples, listed row by row with the result and every original column.](docs/images/cell-inspection.png)
 5. **The caution.** Switch the Y axis to `speed_kmh`. Dark, fast images also look
    bad (45 of 72 wrong), even though the generator never uses speed directly: blur
    increases with speed. The map shows **where** errors concentrate, not **why**.
