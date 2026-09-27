@@ -1,6 +1,6 @@
 # Model Failure Atlas
 
-[![Tests](https://github.com/jpbanquicio16/2026-Hackathon/actions/workflows/tests.yml/badge.svg)](https://github.com/jpbanquicio16/2026-Hackathon/actions/workflows/tests.yml)
+[![CI](https://github.com/jpbanquicio16/2026-Hackathon/actions/workflows/ci.yml/badge.svg)](https://github.com/jpbanquicio16/2026-Hackathon/actions/workflows/ci.yml)
 
 **The model has an overall score, but which kinds of examples does it get wrong?**
 
@@ -118,9 +118,11 @@ examples/                   Second synthetic dataset (churn) and held-out Iris p
 scripts/                    Regenerate the sample data and Iris predictions; fingerprint benchmark
 docs/                       User guide, methodology, deployment notes and screenshots
 tests/                      pytest suite (see Testing)
-.github/workflows/tests.yml Runs the test suite on Python 3.10 and 3.12
-.streamlit/config.toml      Upload size limit
-requirements*.txt           Runtime and test dependencies
+.github/workflows/ci.yml    Lint and the test suite (Python 3.10 and 3.12)
+.pre-commit-config.yaml     Commit hooks: ruff and file hygiene checks
+ruff.toml                   Lint rules
+.streamlit/config.toml      Upload size limit and theme
+requirements*.txt           Runtime, test and lint dependencies
 LICENSE                     MIT license
 ```
 
@@ -164,11 +166,12 @@ The choices that most affect whether the numbers can be trusted:
 ```bash
 pip install -r requirements-dev.txt
 pytest
+pre-commit install  # runs ruff and file checks on every commit
 ```
 
 The suite includes headless Streamlit `AppTest` journeys, so it needs no browser.
-[GitHub Actions](.github/workflows/tests.yml) runs it on Python 3.10 and 3.12 for every
-push to `main` and every pull request.
+[GitHub Actions](.github/workflows/ci.yml) runs the same commit hooks, and the tests on
+Python 3.10 and 3.12, for every push to `main` and every pull request.
 
 | File | Covers |
 | --- | --- |

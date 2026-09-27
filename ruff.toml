@@ -1,0 +1,8 @@
+target-version = "py310"
+line-length = 120
+src = [".", "tests"]
+
+[lint]
+# E501 and the formatter are left off: many existing lines are long, and
+# reformatting them all would bury real changes in the history.
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "RUF100"]

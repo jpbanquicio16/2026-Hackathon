@@ -105,7 +105,7 @@ def test_confusion_matrix_uses_union_of_classes(evaluation):
 def test_top_confusions_counts_off_diagonal_only(evaluation):
     top = analysis.top_confusions(analysis.compute_overview(evaluation.rows), limit=10)
     assert top["errors"].sum() == 5
-    assert set(zip(top["actual"], top["predicted"])) == {("a", "b"), ("a", "d"), ("B", "b"), ("b", "a"), ("c", "a")}
+    assert set(zip(top["actual"], top["predicted"], strict=True)) =={("a", "b"), ("a", "d"), ("B", "b"), ("b", "a"), ("c", "a")}
     assert top["share of errors"].sum() == pytest.approx(1.0)
 
 
@@ -189,7 +189,7 @@ def test_selected_cell_rows_match_its_numbers(fmap):
 
 def test_small_cells_are_flagged_not_hidden(fmap):
     flags = analysis.small_cells(fmap.cells, threshold=3)
-    flagged = {(int(c.x_bin), int(c.y_bin)) for c, f in zip(fmap.cells.itertuples(), flags) if f}
+    flagged = {(int(c.x_bin), int(c.y_bin)) for c, f in zip(fmap.cells.itertuples(), flags, strict=True) if f}
     assert flagged == {(0, 0), (1, 0), (1, 1), (2, 1), (2, 2)}  # (3, 3) has 3, empties excluded
 
 

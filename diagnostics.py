@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from itertools import pairwise
 
 import numpy as np
 import pandas as pd
@@ -265,7 +266,7 @@ def _contains(tokens: list[str], part: list[str]) -> bool:
 
 def _name_reasons(column: str, target: str, class_tokens: dict[str, str]) -> list[tuple[str, str]]:
     tokens = name_tokens(column)
-    pairs = list(zip(tokens, tokens[1:]))
+    pairs = list(pairwise(tokens))
     found: dict[str, str] = {}
     for pair, term in _BIGRAMS.items():
         if pair in pairs:

@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import training  # noqa: E402
+import training
 
 
 def old_fingerprint(raw: pd.DataFrame) -> str:

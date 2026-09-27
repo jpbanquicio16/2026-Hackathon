@@ -7,9 +7,9 @@ import json
 import math
 import platform
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -17,8 +17,10 @@ import sklearn
 from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import (
-    HistGradientBoostingClassifier, HistGradientBoostingRegressor,
-    RandomForestClassifier, RandomForestRegressor,
+    HistGradientBoostingClassifier,
+    HistGradientBoostingRegressor,
+    RandomForestClassifier,
+    RandomForestRegressor,
 )
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.impute import SimpleImputer
@@ -26,8 +28,17 @@ from sklearn.inspection import permutation_importance
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import get_scorer
 from sklearn.model_selection import (
-    GridSearchCV, GroupKFold, GroupShuffleSplit, KFold, ParameterGrid, RepeatedKFold,
-    RepeatedStratifiedKFold, StratifiedGroupKFold, StratifiedKFold, TimeSeriesSplit, train_test_split,
+    GridSearchCV,
+    GroupKFold,
+    GroupShuffleSplit,
+    KFold,
+    ParameterGrid,
+    RepeatedKFold,
+    RepeatedStratifiedKFold,
+    StratifiedGroupKFold,
+    StratifiedKFold,
+    TimeSeriesSplit,
+    train_test_split,
 )
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
 from sklearn.pipeline import Pipeline
@@ -73,7 +84,7 @@ class ResampledClassifier(ClassifierMixin, BaseEstimator):
         classes, counts = np.unique(labels, return_counts=True)
         rng = np.random.RandomState(self.random_state)
         indices = list(range(len(labels)))
-        for label, count in zip(classes, counts):
+        for label, count in zip(classes, counts, strict=True):
             if count < counts.max():
                 indices.extend(rng.choice(np.flatnonzero(labels == label), int(counts.max() - count), replace=True))
         self.estimator_ = clone(self.estimator).fit(values[indices], labels[indices])
@@ -417,7 +428,7 @@ def _cv_splits(labels, split_values, task, method, folds, repeats, seed):
             splits.append((np.flatnonzero(times.isin(unique_times[train_times])), np.flatnonzero(times.isin(unique_times[val_times]))))
     if folds != requested:
         notes.append(f"Cross-validation uses {folds} folds rather than {requested} to fit the available training data.")
-    for train, validation in splits:
+    for train, _ in splits:
         if len(train) < 2 or (task == "classification" and labels.iloc[train].nunique() < 2):
             raise analysis.DataError("A validation fold has too few rows or only one training class. Reduce folds, disable cross-validation or add examples.")
     if task == "classification" and method != "Random":

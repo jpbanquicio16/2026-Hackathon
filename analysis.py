@@ -19,6 +19,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Context, Decimal
+from itertools import pairwise
 
 import numpy as np
 import pandas as pd
@@ -631,7 +632,7 @@ def flexible_bins(values, n_bins: int, method: str = "Equal width", edges: tuple
     if numbers.min() < boundaries[0] or numbers.max() > boundaries[-1]:
         raise DataError(f"Custom boundaries must cover every mapped value ({numbers.min():g} to {numbers.max():g}).")
     boundaries = tuple(float(value) for value in boundaries)
-    labels = [f"[{lo}, {hi}{']' if i == len(boundaries) - 2 else ')'}" for i, (lo, hi) in enumerate(zip(boundaries, boundaries[1:]))]
+    labels = [f"[{lo}, {hi}{']' if i == len(boundaries) - 2 else ')'}" for i, (lo, hi) in enumerate(pairwise(boundaries))]
     return Bins(boundaries, tuple(labels), False, exact_labels=True)
 
 

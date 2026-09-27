@@ -19,7 +19,6 @@ import pandas as pd
 import streamlit as st
 
 import analysis
-import diagnostics
 import exports
 import training
 import ui_training
@@ -496,7 +495,7 @@ def regression_overview(raw, evaluation, roles, numeric, heldout):
     st.header("2 · Held-out test performance" if heldout else "2 · Regression performance", divider="gray")
     metrics = regression_metrics(evaluation.rows)
     columns = st.columns(5)
-    for column, label, key in zip(columns[:3], ("MAE", "RMSE", "R²"), ("mae", "rmse", "r2")):
+    for column, label, key in zip(columns[:3], ("MAE", "RMSE", "R²"), ("mae", "rmse", "r2"), strict=True):
         value = metrics[key]
         column.metric(label, "Undefined" if value is None else f"{value:.4g}", border=True)
     columns[3].metric("Evaluated rows", f"{evaluation.n_evaluated:,}", border=True)
@@ -679,12 +678,12 @@ def heatmap(fmap: analysis.FailureMap, small_n: int, selected: tuple[int | None,
     metric_title = {"error_rate": "Error rate", "errors": "Errors", "mae": "Mean absolute error"}[metric]
     ceiling = 1.0 if metric == "error_rate" else max(float(cells[metric].max()), 1e-12)
 
-    cells["rate_label"] = [(f"{r:.0%}" if metric == "error_rate" else f"{r:,.0f}" if metric == "errors" else f"{r:.3g}") if not e else "" for r, e in zip(rate, empty)]
+    cells["rate_label"] = [(f"{r:.0%}" if metric == "error_rate" else f"{r:,.0f}" if metric == "errors" else f"{r:.3g}") if not e else "" for r, e in zip(rate, empty, strict=True)]
     cells["count_label"] = [
         "" if e or not show_counts else (f"{total:,} examples" if metric == "mae" else f"{errors:,} of {total:,}") + (" · small" if s else "")
-        for errors, total, e, s in zip(cells["errors"], cells["total"], empty, small)
+        for errors, total, e, s in zip(cells["errors"], cells["total"], empty, small, strict=True)
     ]
-    cells["tip_rate"] = [(f"{r:.1%}" if metric == "error_rate" else f"{r:.4g}") if not e else "no examples" for r, e in zip(rate, empty)]
+    cells["tip_rate"] = [(f"{r:.1%}" if metric == "error_rate" else f"{r:.4g}") if not e else "no examples" for r, e in zip(rate, empty, strict=True)]
     cells["tip_note"] = np.where(small, f"Small sample (fewer than {small_n})", np.where(empty, "Empty: no rate", ""))
 
     ramp = PALETTES.get(palette, CAFE_RAMP)
